@@ -32,8 +32,9 @@ def analyze(
     source_old: str,
     source_new: str,
     fragment: str,
-) -> tuple[ImpactResult, float]:
-    """Возвращает (ответ модели, время ответа в секундах)."""
+    think: bool = False,
+) -> tuple[ImpactResult, float, str]:
+    """Возвращает (ответ модели, время ответа в секундах, рассуждения модели или "")."""
     started = time.perf_counter()
     response = ollama.chat(
         model=model,
@@ -43,11 +44,12 @@ def analyze(
         ],
         # Ollama ограничивает генерацию этой схемой: невалидный JSON невозможен.
         format=ImpactResult.model_json_schema(),
-        # У Qwen3 по умолчанию длинные рассуждения; для начала выключаем их,
-        # рассуждением служит поле analysis в схеме.
-        think=False,
+        # think=True: модель (Qwen3) сначала рассуждает отдельным текстом, потом отвечает JSON.
+        # Обычно точнее, но медленнее. По умолчанию выключено, рассуждением служит поле analysis.
+        think=think,
         # temperature=0: одинаковый вход даёт одинаковый ответ, прогоны сравнимы.
         options={"temperature": 0},
     )
     elapsed = time.perf_counter() - started
-    return ImpactResult.model_validate_json(response.message.content), elapsed
+    thinking = response.message.thinking or ""
+    return ImpactResult.model_validate_json(response.message.content), elapsed, thinking

@@ -2,6 +2,7 @@
 
 Пример:
     python scripts/run_eval.py --model qwen3:8b
+    python scripts/run_eval.py --model qwen3:8b --prompt prompts/impact_v1.md --think
 
 Что получится в results/:
     <run>.jsonl     — каждый пример с ответом модели (для разбора ошибок);
@@ -26,7 +27,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="qwen3:8b")
     parser.add_argument("--data", default=ROOT / "data/eval/gold_v0.jsonl", type=Path)
-    parser.add_argument("--prompt", default=ROOT / "prompts/impact_v1.md", type=Path)
+    parser.add_argument("--prompt", default=ROOT / "prompts/impact_v2.md", type=Path)
+    parser.add_argument("--think", action="store_true", help="Включить режим рассуждений модели (медленнее)")
     parser.add_argument("--limit", type=int, default=None, help="Прогнать только первые N примеров")
     args = parser.parse_args()
 
@@ -38,30 +40,34 @@ def main() -> None:
         examples = examples[: args.limit]
     system_prompt = load_prompt(args.prompt)
 
-    # Имя прогона: дата + модель + версия промпта. ":" в имени файла Windows не допускает.
+    # Имя прогона: дата + модель + версия промпта (+ think). ":" в имени файла Windows не допускает.
     run_name = f"{datetime.now():%Y%m%d-%H%M}_{re.sub(r'[^A-Za-z0-9.-]', '-', args.model)}_{args.prompt.stem}"
+    if args.think:
+        run_name += "_think"
     out_dir = ROOT / "results"
     out_dir.mkdir(exist_ok=True)
 
     rows = []
     for i, ex in enumerate(examples, 1):
         try:
-            result, latency = analyze(args.model, system_prompt, ex["source_old"], ex["source_new"], ex["fragment"])
+            result, latency, thinking = analyze(
+                args.model, system_prompt, ex["source_old"], ex["source_new"], ex["fragment"], think=args.think
+            )
             pred, error = result.model_dump(), None
         except Exception as exc:  # один упавший пример не должен останавливать прогон
-            pred, latency, error = None, None, repr(exc).splitlines()[0]
+            pred, latency, thinking, error = None, None, "", repr(exc).splitlines()[0]
 
-        rows.append({"gold": ex, "pred": pred, "latency": latency, "error": error})
+        rows.append({"gold": ex, "pred": pred, "latency": latency, "thinking": thinking, "error": error})
         if pred is None:
             mark = "ERR"
         else:
             mark = "ok " if pred["impacted"] == ex["impacted"] else "MISS"
         said = "—" if pred is None else pred["impacted"]
         print(f"[{i:>2}/{len(examples)}] {mark} {ex['id']} {ex['change_type']:<10} gold={ex['impacted']!s:<5} pred={said!s:<5}"
-              + (f" {latency:.1f}s" if latency else f" {error}"))
+              + (f" {latency:.1f}s" if latency is not None else f" {error}"))
 
     summary = compute(rows)
-    summary.update({"model": args.model, "prompt": args.prompt.name, "data": args.data.name})
+    summary.update({"model": args.model, "prompt": args.prompt.name, "think": args.think, "data": args.data.name})
 
     with open(out_dir / f"{run_name}.jsonl", "w", encoding="utf-8") as f:
         for row in rows:
