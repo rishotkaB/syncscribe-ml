@@ -31,6 +31,6 @@ ML-часть SyncScribe. Модуль определяет, затронут л
 | `src/syncscribe_ml/metrics.py` | Accuracy, precision, recall, traceability, латентность |
 | `scripts/run_eval.py` | Прогон модели на наборе, результаты сохраняются в `results/` |
 
-## Пороги для пилота (из ML.docx)
+## Пороги для пилота
 
 Accuracy ≥ 80%, Precision ≥ 75%, Recall ≥ 75%, Hallucination ≤ 10%, Edit Usefulness ≥ 3.5, Traceability ≥ 60%.
