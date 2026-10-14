@@ -3,6 +3,7 @@
 Пример:
     python scripts/run_eval.py --model qwen3:8b
     python scripts/run_eval.py --model qwen3:8b --prompt prompts/impact_v1.md --think
+    python scripts/run_eval.py --edits-from results/<run>.jsonl   # пересобрать edits.md без вызова модели
 
 Что получится в results/:
     <run>.jsonl     — каждый пример с ответом модели (для разбора ошибок);
@@ -30,10 +31,21 @@ def main() -> None:
     parser.add_argument("--prompt", default=ROOT / "prompts/impact_v2.md", type=Path)
     parser.add_argument("--think", action="store_true", help="Включить режим рассуждений модели (медленнее)")
     parser.add_argument("--limit", type=int, default=None, help="Прогнать только первые N примеров")
+    parser.add_argument("--edits-from", type=Path, default=None,
+                        help="Не запускать модель, а пересобрать edits.md из готового results/<run>.jsonl")
     args = parser.parse_args()
 
     # В консоли Windows иначе бывают проблемы с кириллицей.
     sys.stdout.reconfigure(encoding="utf-8")
+
+    if args.edits_from:
+        rows = [json.loads(line) for line in args.edits_from.read_text(encoding="utf-8").splitlines() if line.strip()]
+        out = args.edits_from.with_suffix(".edits.md")
+        if out.exists():  # не затираем файл, в котором уже могут стоять оценки
+            out = args.edits_from.with_suffix(".edits.new.md")
+        write_edits_review(rows, out)
+        print(f"Пересобран {out}")
+        return
 
     examples = [json.loads(line) for line in args.data.read_text(encoding="utf-8").splitlines() if line.strip()]
     if args.limit:
@@ -88,6 +100,8 @@ def write_edits_review(rows: list[dict], path: Path) -> None:
             continue
         lines += [
             f"## {gold['id']} ({gold['change_type']})\n",
+            f"**Источник (было):** {gold['source_old']}\n",
+            f"**Источник (стало):** {gold['source_new']}\n",
             f"**Фрагмент:** {gold['fragment']}\n",
             f"**Эталон:** {gold['expected_edit']}\n",
             f"**Модель:** {pred['new_text']}\n",
