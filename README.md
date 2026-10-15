@@ -30,6 +30,12 @@ ML-часть SyncScribe. Модуль определяет, затронут л
 | `src/syncscribe_ml/llm.py` | Один вызов модели на пару (изменение источника, фрагмент) |
 | `src/syncscribe_ml/metrics.py` | Accuracy, precision, recall, traceability, латентность |
 | `scripts/run_eval.py` | Прогон модели на наборе, результаты сохраняются в `results/` |
+| `src/syncscribe_ml/diff.py` | Этап 3: что изменилось между версиями источника, и пары (БЫЛО, СТАЛО) по разделам для LLM |
+| `src/syncscribe_ml/parse.py` | Загрузка .md/.txt, а .docx/.pdf через Docling (`pip install -e .[docling]`) |
+| `scripts/diff_docs.py` | Показать изменения между двумя версиями (`--pairs` — что уйдёт в LLM) |
+| `scripts/check_docs.py` | Сквозной прогон: две версии источника + производный документ → что править |
+| `data/diff/` | Пример для этапа 3: руководство v1/v2 и производный документ |
+| `tests/test_diff.py` | Проверки diff: `python tests/test_diff.py` |
 
 ## Пороги для пилота
 
