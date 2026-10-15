@@ -7,6 +7,7 @@ ML-часть SyncScribe. Модуль определяет, затронут л
 1. Установи [Ollama](https://ollama.com/download) и скачай модель:
    ```
    ollama pull qwen3:8b
+   ollama pull bge-m3
    ```
 2. Подготовь окружение (Python 3.10+). Команды выполняются из папки репозитория:
    ```
@@ -33,9 +34,11 @@ ML-часть SyncScribe. Модуль определяет, затронут л
 | `src/syncscribe_ml/diff.py` | Этап 3: что изменилось между версиями источника, и пары (БЫЛО, СТАЛО) по разделам для LLM |
 | `src/syncscribe_ml/parse.py` | Загрузка .md/.txt, а .docx/.pdf через Docling (`pip install -e .[docling]`) |
 | `scripts/diff_docs.py` | Показать изменения между двумя версиями (`--pairs` — что уйдёт в LLM) |
-| `scripts/check_docs.py` | Сквозной прогон: две версии источника + производный документ → что править |
+| `src/syncscribe_ml/retrieval.py` | Этап 4: гибридный поиск кандидатов (BGE-M3 через Ollama + BM25, слияние RRF) и правило для удалённых разделов |
+| `scripts/check_docs.py` | Сквозной прогон: две версии источника + производный документ → что править (`--all` — без поиска) |
+| `scripts/eval_retrieval.py` | recall@k поиска на 50 примерах (`--mode hybrid/dense/bm25`) |
 | `data/diff/` | Пример для этапа 3: руководство v1/v2 и производный документ |
-| `tests/test_diff.py` | Проверки diff: `python tests/test_diff.py` |
+| `tests/` | Проверки diff и поиска: `python tests/test_diff.py`, `python tests/test_retrieval.py` |
 
 ## Пороги для пилота
 
