@@ -30,7 +30,7 @@ def main() -> None:
     parser.add_argument("derived", help="Производный документ, который проверяем")
     parser.add_argument("--model", default="qwen3:8b")
     parser.add_argument("--prompt", default=ROOT / "prompts/impact_v2.md", type=Path)
-    parser.add_argument("--top-k", type=int, default=3, help="Сколько кандидатов на одно изменение отдаём в LLM")
+    parser.add_argument("--top-k", type=int, default=5, help="Сколько кандидатов на одно изменение отдаём в LLM")
     parser.add_argument("--mode", default="hybrid", choices=["hybrid", "dense", "bm25"])
     parser.add_argument("--all", action="store_true", help="Без поиска: каждое изменение × каждый абзац")
     args = parser.parse_args()
