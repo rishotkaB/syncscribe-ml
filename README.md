@@ -35,7 +35,8 @@ ML-часть SyncScribe. Модуль определяет, затронут л
 | `src/syncscribe_ml/parse.py` | Загрузка .md/.txt, а .docx/.pdf через Docling (`pip install -e .[docling]`) |
 | `scripts/diff_docs.py` | Показать изменения между двумя версиями (`--pairs` — что уйдёт в LLM) |
 | `src/syncscribe_ml/retrieval.py` | Этап 4: гибридный поиск кандидатов (BGE-M3 через Ollama + BM25, слияние RRF) и правило для удалённых разделов |
-| `scripts/check_docs.py` | Сквозной прогон: две версии источника + производный документ → что править (`--all` — без поиска, `--json out.json` — результат в формате SyncBack) |
+| `scripts/check_docs.py` | Сквозной прогон: две версии источника + производный документ → что править (`--all` — без поиска, `--json out.json` — результат в формате SyncBack, `--fast` — сначала короткий «да/нет», `--labels` — точность и полнота по разметке) |
+| `scripts/make_large_example.py` | Большой синтетический пример для замера скорости: `data/large/` (источник 15 разделов, 13 изменений; документ 198 абзацев, 39 затронуты) |
 | `src/syncscribe_ml/syncback.py` | Перевод наших правок в формат ответа бэкенда SyncBack (`{"suggestions": [...]}`) |
 | `scripts/eval_retrieval.py` | recall@k поиска на 50 примерах (`--mode hybrid/dense/bm25`) |
 | `data/diff/` | Пример для этапа 3: руководство v1/v2 и производный документ |

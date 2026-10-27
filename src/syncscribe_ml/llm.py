@@ -9,7 +9,7 @@ from pathlib import Path
 
 import ollama
 
-from .schema import ImpactResult
+from .schema import ImpactResult, QuickResult
 
 
 def load_prompt(path: str | Path) -> str:
@@ -53,3 +53,24 @@ def analyze(
     elapsed = time.perf_counter() - started
     thinking = response.message.thinking or ""
     return ImpactResult.model_validate_json(response.message.content), elapsed, thinking
+
+
+def classify(model: str, system_prompt: str, source_old: str, source_new: str, fragment: str) -> tuple[bool, float]:
+    """Быстрый режим, шаг 1: только «затронут / нет». Возвращает (impacted, время в секундах).
+
+    Почти всё время полного вызова уходит на генерацию analysis и new_text. Здесь ответ —
+    `{"impacted": false}`, поэтому вызов в разы короче. Полный analyze зовём только для «да».
+    """
+    started = time.perf_counter()
+    response = ollama.chat(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": build_user_message(source_old, source_new, fragment)},
+        ],
+        format=QuickResult.model_json_schema(),
+        think=False,
+        options={"temperature": 0},
+    )
+    elapsed = time.perf_counter() - started
+    return QuickResult.model_validate_json(response.message.content).impacted, elapsed

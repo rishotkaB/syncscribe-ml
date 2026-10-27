@@ -23,7 +23,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
 
-from .diff import SourcePair
+from .diff import Change, SourcePair
 
 Mode = Literal["hybrid", "dense", "bm25"]
 EMBED_MODEL = "bge-m3"
@@ -138,6 +138,29 @@ def pair_query(pair: SourcePair) -> str:
             if unit is not None and unit.text not in parts:
                 parts.append(unit.text)
     return "\n".join(parts)
+
+
+def change_query(pair: SourcePair, change: Change) -> str:
+    """Запрос по одному изменению: заголовок раздела + эта единица до и после."""
+    parts = [pair.section[-1]] if pair.section else []
+    parts += [u.text for u in (change.old, change.new) if u is not None]
+    return "\n".join(parts)
+
+
+def pair_candidates(index: FragmentIndex, pair: SourcePair, k: int = 5) -> list[Hit]:
+    """Кандидаты для раздела: top-k на КАЖДОЕ изменение, объединённые.
+
+    Один запрос на весь раздел даёт не больше k кандидатов, а в разделе бывает 3 изменения
+    и по 3 абзаца на каждое: часть затронутых абзацев не попадёт в LLM никогда
+    (на большом синтетическом примере 33 из 39 при k=5). Запрос на изменение этого не теряет,
+    а вызовов LLM растёт умеренно: одни и те же абзацы находятся по разным изменениям.
+    """
+    best: dict[int, Hit] = {}
+    for change in pair.changes:
+        for h in index.search(change_query(pair, change), k=k):
+            if h.index not in best or h.rrf > best[h.index].rrf:
+                best[h.index] = h
+    return sorted(best.values(), key=lambda h: h.rrf, reverse=True)
 
 
 # ---------- удалённые разделы ----------
