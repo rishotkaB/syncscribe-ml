@@ -3,6 +3,7 @@
 Пример:
     python scripts/check_docs.py data/diff/admin_guide_v1.md data/diff/admin_guide_v2.md data/diff/user_guide.md
     python scripts/check_docs.py ... --all          # без поиска, перебор всех пар (как раньше), для сравнения
+    python scripts/check_docs.py ... --json out.json  # ещё и сохранить результат в формате SyncBack
 
 Как устроено:
     1. diff: изменённые разделы источника → пары (БЫЛО, СТАЛО);
@@ -12,6 +13,7 @@
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -19,6 +21,7 @@ from syncscribe_ml.diff import parse_markdown, to_source_pairs
 from syncscribe_ml.llm import analyze, load_prompt
 from syncscribe_ml.parse import load_document
 from syncscribe_ml.retrieval import FragmentIndex, deletion_flags, is_deletion, pair_query
+from syncscribe_ml import syncback
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -33,6 +36,7 @@ def main() -> None:
     parser.add_argument("--top-k", type=int, default=5, help="Сколько кандидатов на одно изменение отдаём в LLM")
     parser.add_argument("--mode", default="hybrid", choices=["hybrid", "dense", "bm25"])
     parser.add_argument("--all", action="store_true", help="Без поиска: каждое изменение × каждый абзац")
+    parser.add_argument("--json", type=Path, default=None, help="Сохранить правки в файл в формате ответа SyncBack")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -89,6 +93,20 @@ def main() -> None:
             print(f"  ⚠ раздел источника «{where}» удалён — проверьте вручную, черновика правки нет")
     touched = set(hits_by_fragment) | set(flags_by_fragment)
     print(f"\nЗатронуто абзацев: {len(touched)} из {len(fragments)}")
+
+    if args.json:
+        # section_ref = заголовок раздела ПРОИЗВОДНОГО документа, где стоит абзац (так требует SyncBack).
+        section_of = {u.paragraph: (u.section[-1] if u.section else "") for u in derived.units}
+        suggestions, flags = [], []
+        for j in sorted(touched):
+            p = fragment_ids[j]
+            for _, r in hits_by_fragment.get(j, []):
+                suggestions.append(syncback.suggestion(section_of.get(p, ""), derived.raw[p], r))
+            for where in flags_by_fragment.get(j, []):
+                flags.append(syncback.deletion_flag(section_of.get(p, ""), derived.raw[p], where))
+        result = syncback.response(suggestions, flags)
+        args.json.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Сохранено: {args.json} (правок: {len(result['suggestions'])}, пометок: {len(flags)})")
 
 
 if __name__ == "__main__":

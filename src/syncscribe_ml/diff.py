@@ -51,7 +51,8 @@ class Unit:
 @dataclass
 class Document:
     units: list[Unit]
-    paragraphs: list[str]  # исходный текст абзацев, индекс = Unit.paragraph
+    paragraphs: list[str]  # текст абзацев (строки абзаца склеены пробелом), индекс = Unit.paragraph
+    raw: list[str] = field(default_factory=list)  # те же абзацы дословно, как в файле: для поиска правки в документе
 
 
 @dataclass
@@ -106,6 +107,7 @@ def parse_markdown(text: str) -> Document:
     """
     units: list[Unit] = []
     paragraphs: list[str] = []
+    raw_paragraphs: list[str] = []
     section: list[tuple[int, str]] = []  # стек (уровень, заголовок)
     buffer: list[str] = []
 
@@ -116,6 +118,7 @@ def parse_markdown(text: str) -> Document:
         if not buffer:
             return
         paragraph = " ".join(line.strip() for line in buffer)
+        raw_paragraphs.append("\n".join(buffer))
         buffer.clear()
         paragraphs.append(paragraph)
         for sentence in split_sentences(paragraph):
@@ -123,6 +126,7 @@ def parse_markdown(text: str) -> Document:
 
     def add_single(line: str, kind) -> None:
         paragraphs.append(line)
+        raw_paragraphs.append(line)
         units.append(Unit(line, path(), len(paragraphs) - 1, kind))
 
     for raw in text.splitlines():
@@ -148,7 +152,7 @@ def parse_markdown(text: str) -> Document:
         else:
             buffer.append(line)
     flush()
-    return Document(units, paragraphs)
+    return Document(units, paragraphs, raw_paragraphs)
 
 
 # ---------- выравнивание ----------
