@@ -1,6 +1,7 @@
 """Генератор большого синтетического примера для замера скорости и точности сквозного прогона.
 
     python scripts/make_large_example.py   → data/large/{source_v1.md, source_v2.md, derived.md, labels.json}
+                                           и data/large/truth/ для режима «источник истины»
 
 Источник: 15 разделов по 4 параметра. В v2 изменено 13 параметров в 9 разделах и добавлен один новый
 (добавление ничего в производном документе не делает ложным). Производный документ: 3 главы, в каждой
@@ -98,6 +99,24 @@ FILLER = [
 ]
 
 
+# Режим «источник истины»: источники = source_v2 (руководство) + FAQ. В FAQ два параметра расходятся
+# с руководством (там старые значения), а один совпадает. Абзацы про спорные параметры — sources_conflict.
+FAQ = [
+    ("время жизни сессии", "24 часа"),         # в руководстве 8 часов → спор
+    ("число одновременных сессий", "5 сессий"),  # в руководстве 3 → спор
+    ("максимальный размер файла", "100 МБ"),     # совпадает с руководством
+]
+# Абзацы, о которых источники молчат: модель должна их не трогать (not_covered).
+NOT_COVERED = [
+    "Служба поддержки отвечает на обращения в течение 4 часов.",
+    "Обучение администраторов занимает 2 дня.",
+    "Плановые обновления выходят раз в квартал.",
+    "Горячая линия работает с 9:00 до 18:00 по московскому времени.",
+    "Для пилота выделяется отдельный менеджер внедрения.",
+    "Документация доступна на русском и английском языках.",  # ловушка: «русский и английский» есть в источнике, но про поиск
+]
+
+
 def cap(s: str) -> str:
     return s[0].upper() + s[1:]
 
@@ -136,6 +155,29 @@ def derived() -> tuple[str, list[dict]]:
     return "\n".join(lines), labels
 
 
+def truth_example() -> tuple[str, str, list[dict]]:
+    """faq.md, документ для правки (derived + глава без покрытия источником), разметка с ожидаемым вердиктом."""
+    faq_text = "# Частые вопросы\n\n## Частые вопросы\n\n" + "\n\n".join(
+        f"Сколько составляет {name}? {cap(name)}: {value}." for name, value in FAQ
+    ) + "\n"
+    disputed = {name for name, value in FAQ if next(new or old for _, n, old, new in FACTS if n == name) != value}
+
+    text, _ = derived()
+    text += "\n## Поддержка\n\n" + "\n\n".join(NOT_COVERED) + "\n"
+    labels = []
+    for c, (chapter, tpl) in enumerate(TEMPLATES):
+        for sec, name, old, new in FACTS:
+            if name in disputed:
+                expected, edit = "sources_conflict", ""
+            elif new is not None:
+                expected, edit = "contradicts", tpl.format(name=name, value=new)
+            else:
+                expected, edit = "ok", ""
+            labels.append({"paragraph": tpl.format(name=name, value=old), "expected": expected, "expected_edit": edit})
+    labels += [{"paragraph": t, "expected": "ok", "expected_edit": ""} for t in NOT_COVERED]
+    return faq_text, text, labels
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "source_v1.md").write_text(source(1), encoding="utf-8")
@@ -145,6 +187,17 @@ def main() -> None:
     (OUT / "labels.json").write_text(json.dumps(labels, ensure_ascii=False, indent=1), encoding="utf-8")
     n_par = len([l for l in text.split("\n\n") if l.strip() and not l.startswith("#")])
     print(f"Абзацев в производном документе: {n_par}, из них затронуто: {sum(l['impacted'] for l in labels)}")
+
+    truth = OUT / "truth"
+    truth.mkdir(exist_ok=True)
+    faq_text, text, labels = truth_example()
+    (truth / "admin_guide.md").write_text(source(2), encoding="utf-8")
+    (truth / "faq.md").write_text(faq_text, encoding="utf-8")
+    (truth / "derived.md").write_text(text, encoding="utf-8")
+    (truth / "labels.json").write_text(json.dumps(labels, ensure_ascii=False, indent=1), encoding="utf-8")
+    count = {k: sum(l["expected"] == k for l in labels) for k in ("contradicts", "sources_conflict", "ok")}
+    print(f"Источник истины: {count['contradicts']} абзацев противоречат, {count['sources_conflict']} спорных, "
+          f"{count['ok']} размеченных верных/непокрытых")
 
 
 if __name__ == "__main__":

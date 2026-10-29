@@ -35,3 +35,33 @@ class QuickResult(BaseModel):
     """Быстрый режим: только решение. Ответ в несколько токенов вместо ~150, правку пишем потом и только для «да»."""
 
     impacted: bool = Field(description="Сделало ли изменение источника фрагмент неверным")
+
+
+# ---------- режим «источник истины» ----------
+# Старой версии источника нет: модель сверяет абзац с найденными кусками источников истины.
+
+Verdict = Literal["consistent", "contradicts", "not_covered", "sources_conflict"]
+
+
+class Quote(BaseModel):
+    source: int = Field(description="Номер куска источника из запроса: [1], [2], ...")
+    text: str = Field(description="Дословная цитата из этого куска")
+
+
+class TruthResult(BaseModel):
+    analysis: str = Field(description="1-3 предложения: что утверждает фрагмент и что говорят источники")
+    verdict: Verdict = Field(
+        description="consistent — согласуется; contradicts — противоречит, нужна правка; "
+        "not_covered — источники об этом молчат; sources_conflict — источники противоречат друг другу"
+    )
+    new_text: str = Field(description="Исправленный фрагмент, только для contradicts; иначе пустая строка")
+    quotes: list[Quote] = Field(
+        description="Для contradicts — цитата, на которой основана правка; для sources_conflict — "
+        "цитаты из каждого спорящего источника; иначе пустой список"
+    )
+
+
+class TruthQuick(BaseModel):
+    """Быстрый режим: только вердикт, полный вызов — для contradicts и sources_conflict."""
+
+    verdict: Verdict

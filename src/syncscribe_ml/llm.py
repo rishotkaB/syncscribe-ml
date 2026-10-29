@@ -8,8 +8,9 @@ import time
 from pathlib import Path
 
 import ollama
+from pydantic import BaseModel
 
-from .schema import ImpactResult, QuickResult
+from .schema import ImpactResult, QuickResult, TruthQuick, TruthResult
 
 
 def load_prompt(path: str | Path) -> str:
@@ -74,3 +75,32 @@ def classify(model: str, system_prompt: str, source_old: str, source_new: str, f
     )
     elapsed = time.perf_counter() - started
     return QuickResult.model_validate_json(response.message.content).impacted, elapsed
+
+
+# ---------- режим «источник истины» ----------
+
+def build_truth_message(chunks: list[str], fragment: str) -> str:
+    """Куски источников нумеруем: по номеру модель ссылается на кусок в цитате, а мы проверяем, что цитата из него."""
+    sources = "\n\n".join(f"[{i}] {c}" for i, c in enumerate(chunks, 1))
+    return f"ИСТОЧНИКИ ИСТИНЫ:\n{sources}\n\nФРАГМЕНТ:\n{fragment}"
+
+
+def _chat(model: str, system_prompt: str, user: str, schema: type[BaseModel]):
+    started = time.perf_counter()
+    response = ollama.chat(
+        model=model,
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user}],
+        format=schema.model_json_schema(),
+        think=False,
+        options={"temperature": 0},
+    )
+    return schema.model_validate_json(response.message.content), time.perf_counter() - started
+
+
+def analyze_truth(model: str, system_prompt: str, chunks: list[str], fragment: str) -> tuple[TruthResult, float]:
+    return _chat(model, system_prompt, build_truth_message(chunks, fragment), TruthResult)
+
+
+def classify_truth(model: str, system_prompt: str, chunks: list[str], fragment: str) -> tuple[str, float]:
+    result, elapsed = _chat(model, system_prompt, build_truth_message(chunks, fragment), TruthQuick)
+    return result.verdict, elapsed

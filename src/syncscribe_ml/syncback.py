@@ -61,3 +61,33 @@ def dedupe(suggestions: list[dict]) -> list[dict]:
 
 def response(suggestions: list[dict], flags: list[dict]) -> dict:
     return {"suggestions": dedupe(suggestions), "flags": flags}
+
+
+# ---------- режим «источник истины» ----------
+
+def truth_suggestion(section_ref: str, old_text: str, analysis: str, new_text: str, quotes: list[tuple[str, str]]) -> dict:
+    """Абзац противоречит источнику истины → правка modify; в обосновании цитата и файл."""
+    rationale = analysis.strip()
+    for file, text in quotes:
+        rationale += f" Источник ({file}): «{text}»"
+    return {
+        "section_ref": section_ref,
+        "change_type": "modify",
+        "old_text": old_text,
+        "new_text": new_text,
+        "insert_after": "",
+        "rationale": rationale,
+        "confidence_score": None,
+    }
+
+
+def conflict_flag(section_ref: str, old_text: str, quotes: list[tuple[str, str]]) -> dict:
+    """Источники противоречат друг другу: правку не предлагаем, показываем, кто что говорит."""
+    return {
+        "section_ref": section_ref,
+        "old_text": old_text,
+        "reason": "sources_conflict",
+        "rationale": "Источники истины противоречат друг другу, проверьте вручную. "
+        + " ".join(f"{file}: «{text}»" for file, text in quotes),
+        "quotes": [{"file": file, "text": text} for file, text in quotes],
+    }
