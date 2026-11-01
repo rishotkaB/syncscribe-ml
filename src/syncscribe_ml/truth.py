@@ -64,3 +64,41 @@ def bad_quotes(result: TruthResult, chunks: list[Chunk]) -> list[str]:
 def quoted_sources(result: TruthResult, chunks: list[Chunk]) -> list[tuple[str, str]]:
     """[(файл, цитата)] для показа человеку."""
     return [(chunks[q.source - 1].file if 1 <= q.source <= len(chunks) else "?", q.text) for q in result.quotes]
+
+
+# ---------- несколько источников: спор определяем правилом ----------
+# Модель надёжно отвечает «противоречит ли абзац ЭТОМУ тексту», но плохо сравнивает источники между собой:
+# видя два куска с разными значениями, она молча выбирает один и пишет правку. Поэтому, если нашлись куски
+# из разных файлов, спрашиваем модель по каждому файлу отдельно, а спор вычисляем из её ответов.
+
+def by_file(chunks: list[Chunk]) -> dict[str, list[Chunk]]:
+    groups: dict[str, list[Chunk]] = {}
+    for c in chunks:
+        groups.setdefault(c.file, []).append(c)
+    return groups
+
+
+def combine(per_file: dict[str, TruthResult], chunks_of: dict[str, list[Chunk]]) -> tuple[str, TruthResult | None, list[tuple[str, str]]]:
+    """Ответы модели по каждому файлу → (вердикт, ответ с правкой или None, [(файл, цитата)]).
+
+    Спор: один файл подтверждает абзац, а другой ему противоречит, или два файла требуют разных правок.
+    Тогда правку не предлагаем, показываем цитаты из каждого спорящего файла.
+    """
+    verdicts = {f: r.verdict for f, r in per_file.items()}
+    contra = [f for f, v in verdicts.items() if v == "contradicts"]
+    agree = [f for f, v in verdicts.items() if v == "consistent"]
+    own_conflict = [f for f, v in verdicts.items() if v == "sources_conflict"]
+
+    def quotes(files: list[str]) -> list[tuple[str, str]]:
+        return [q for f in files for q in quoted_sources(per_file[f], chunks_of[f])]
+
+    edits = {per_file[f].new_text.strip() for f in contra}
+    if (contra and agree) or len(edits) > 1:
+        return "sources_conflict", None, quotes(contra + agree)
+    if own_conflict:  # противоречие внутри одного файла
+        return "sources_conflict", None, quotes(own_conflict)
+    if contra:
+        return "contradicts", per_file[contra[0]], quotes(contra)
+    if agree:
+        return "consistent", None, []
+    return "not_covered", None, []

@@ -4,7 +4,7 @@ from syncscribe_ml import syncback
 from syncscribe_ml.llm import build_truth_message
 from syncscribe_ml.retrieval import FragmentIndex
 from syncscribe_ml.schema import Quote, TruthResult
-from syncscribe_ml.truth import bad_quotes, load_chunks, quoted_sources, search_text
+from syncscribe_ml.truth import bad_quotes, by_file, combine, load_chunks, quoted_sources, search_text
 
 SOURCES = {
     "docs/admin.md": "# Руководство\n\n## Сессии\n\nВремя жизни сессии: 8 часов.\n\n## API\n\nЛимит API: 60 запросов в минуту.\n",
@@ -45,6 +45,34 @@ def test_conflict_flag_has_no_edit():
     flag = syncback.conflict_flag("Сессии", "Сессия живёт 24 часа.", [("admin.md", "8 часов."), ("faq.md", "24 часа.")])
     assert flag["reason"] == "sources_conflict" and "new_text" not in flag
     assert flag["quotes"][1] == {"file": "faq.md", "text": "24 часа."}
+
+
+def _r(verdict, new_text="", quote=""):
+    return TruthResult(analysis="", verdict=verdict, new_text=new_text, quotes=[Quote(source=1, text=quote)] if quote else [])
+
+
+def test_combine_one_agrees_other_contradicts_is_conflict():
+    groups = by_file(load_chunks(SOURCES))
+    per_file = {"admin.md": _r("contradicts", "Сессия живёт 8 часов.", "Время жизни сессии: 8 часов."),
+                "faq.md": _r("consistent", quote="Время жизни сессии: 24 часа.")}
+    verdict, result, quotes = combine(per_file, groups)
+    assert verdict == "sources_conflict" and result is None
+    assert quotes == [("admin.md", "Время жизни сессии: 8 часов."), ("faq.md", "Время жизни сессии: 24 часа.")]
+
+
+def test_combine_different_edits_is_conflict_same_edit_is_not():
+    groups = by_file(load_chunks(SOURCES))
+    a, b = _r("contradicts", "8 часов."), _r("contradicts", "24 часа.")
+    assert combine({"admin.md": a, "faq.md": b}, groups)[0] == "sources_conflict"
+    verdict, result, _ = combine({"admin.md": a, "faq.md": _r("contradicts", "8 часов.")}, groups)
+    assert verdict == "contradicts" and result.new_text == "8 часов."
+
+
+def test_combine_not_covered_file_does_not_create_conflict():
+    groups = by_file(load_chunks(SOURCES))
+    verdict, result, _ = combine({"admin.md": _r("contradicts", "X."), "faq.md": _r("not_covered")}, groups)
+    assert verdict == "contradicts" and result.new_text == "X."
+    assert combine({"admin.md": _r("not_covered"), "faq.md": _r("consistent")}, groups)[0] == "consistent"
 
 
 if __name__ == "__main__":

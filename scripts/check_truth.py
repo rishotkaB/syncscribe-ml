@@ -10,7 +10,9 @@
     1. источники режем на куски (абзацы), индексируем (BGE-M3 + BM25);
     2. для каждого абзаца документа ищем top-k кусков источников;
     3. LLM выбирает вердикт: consistent / not_covered (не трогаем), contradicts (правка),
-       sources_conflict (источники спорят: правки нет, только цитаты из каждого).
+       sources_conflict (источники спорят: правки нет, только цитаты из каждого);
+    4. если нашлись куски из разных файлов, модель отвечает по каждому файлу отдельно, а спор
+       («один файл подтверждает, другой противоречит») определяет правило truth.combine.
 """
 
 import argparse
@@ -25,7 +27,7 @@ from syncscribe_ml.diff import parse_markdown
 from syncscribe_ml.llm import analyze_truth, classify_truth, load_prompt
 from syncscribe_ml.parse import load_document
 from syncscribe_ml.retrieval import FragmentIndex
-from syncscribe_ml.truth import NEEDS_ATTENTION, bad_quotes, load_chunks, quoted_sources, search_text
+from syncscribe_ml.truth import NEEDS_ATTENTION, bad_quotes, by_file, combine, load_chunks, search_text
 
 ROOT = Path(__file__).resolve().parent.parent
 MARK = {"consistent": "-", "not_covered": "нет в источнике", "contradicts": "ПРОТИВОРЕЧИТ", "sources_conflict": "ИСТОЧНИКИ СПОРЯТ"}
@@ -36,8 +38,8 @@ def main() -> None:
     parser.add_argument("derived", help="Документ, который проверяем и правим")
     parser.add_argument("sources", nargs="+", help="Файлы-источники истины")
     parser.add_argument("--model", default="qwen3:8b")
-    parser.add_argument("--prompt", default=ROOT / "prompts/truth_v1.md", type=Path)
-    parser.add_argument("--quick-prompt", default=ROOT / "prompts/truth_quick_v1.md", type=Path)
+    parser.add_argument("--prompt", default=ROOT / "prompts/truth_v2.md", type=Path)
+    parser.add_argument("--quick-prompt", default=ROOT / "prompts/truth_quick_v2.md", type=Path)
     parser.add_argument("--top-k", type=int, default=3, help="Сколько кусков источников показываем модели на один абзац")
     parser.add_argument("--mode", default="hybrid", choices=["hybrid", "dense", "bm25"])
     parser.add_argument("--fast", action="store_true", help="Сначала короткий вызов «только вердикт», полный — если надо править")
@@ -57,40 +59,51 @@ def main() -> None:
     print(f"Кусков в источниках: {len(chunks)} ({len(args.sources)} файл.), абзацев в документе: {len(fragment_ids)}\n")
 
     verdicts: dict[int, str] = {}
-    results: dict[int, tuple] = {}  # абзац → (TruthResult, найденные куски)
+    results: dict[int, tuple] = {}  # абзац → (вердикт, ответ с правкой или None, [(файл, цитата)])
     calls = quick_calls = 0
     llm_seconds = 0.0
     hallucinated = 0
     for p in fragment_ids:
         fragment = derived.paragraphs[p]
-        found = [chunks[h.index] for h in index.search(fragment, k=args.top_k)]
-        if not found:
+        groups = by_file([chunks[h.index] for h in index.search(fragment, k=args.top_k)])
+        if not groups:
             verdicts[p] = "not_covered"
             continue
-        texts = [c.for_model() for c in found]
+        log = []
         try:
-            quick = ""
+            files = list(groups)
             if args.fast:
-                quick_calls += 1
-                verdict, latency = classify_truth(args.model, quick_prompt, texts, fragment)
-                llm_seconds += latency
-                if verdict not in NEEDS_ATTENTION:
-                    verdicts[p] = verdict
-                    print(f"абзац {p:>3}: {MARK[verdict]} (быстро {latency:.1f}s)")
+                quick = {}
+                for f in groups:
+                    quick_calls += 1
+                    quick[f], latency = classify_truth(args.model, quick_prompt, [c.for_model() for c in groups[f]], fragment)
+                    llm_seconds += latency
+                    log.append(f"быстро {latency:.1f}s")
+                flagged = [f for f, v in quick.items() if v in NEEDS_ATTENTION]
+                if not flagged:
+                    verdicts[p] = "consistent" if "consistent" in quick.values() else "not_covered"
+                    print(f"абзац {p:>3}: {MARK[verdicts[p]]} ({' + '.join(log)})")
                     continue
-                quick = f"быстро {latency:.1f}s + "
-            calls += 1
-            result, latency = analyze_truth(args.model, prompt, texts, fragment)
-            llm_seconds += latency
+                # Полный ответ нужен по «тревожным» файлам и, если файлов несколько, по подтверждающим:
+                # их цитаты понадобятся, если окажется, что источники спорят.
+                files = flagged + [f for f, v in quick.items() if v == "consistent" and len(groups) > 1]
+            per_file = {}
+            for f in files:
+                calls += 1
+                per_file[f], latency = analyze_truth(args.model, prompt, [c.for_model() for c in groups[f]], fragment)
+                llm_seconds += latency
+                log.append(f"{latency:.1f}s")
         except Exception as exc:  # один упавший вызов не должен останавливать прогон
             print(f"абзац {p:>3}: ОШИБКА {repr(exc).splitlines()[0]}")
             continue
-        verdicts[p] = result.verdict
-        results[p] = (result, found)
-        bad = bad_quotes(result, found) if result.verdict in NEEDS_ATTENTION else []
-        hallucinated += len(bad)
-        warn = f" ⚠ цитат не из источника: {len(bad)}" if bad else ""
-        print(f"абзац {p:>3}: {MARK[result.verdict]} ({quick}{latency:.1f}s){warn}")
+        verdict, result, quotes = combine(per_file, groups)
+        verdicts[p] = verdict
+        results[p] = (verdict, result, quotes)
+        bad = sum(len(bad_quotes(r, groups[f])) for f, r in per_file.items() if r.verdict != "not_covered")
+        hallucinated += bad
+        warn = f" ⚠ цитат не из источника: {bad}" if bad else ""
+        many = f", файлов: {len(groups)}" if len(groups) > 1 else ""
+        print(f"абзац {p:>3}: {MARK[verdict]} ({' + '.join(log)}{many}){warn}")
 
     print(f"\nВызовов LLM: полных {calls}" + (f" + коротких: {quick_calls}" if args.fast else ""))
     print(f"Время: всего {time.perf_counter() - started:.0f}s, из них в LLM {llm_seconds:.0f}s")
@@ -99,15 +112,15 @@ def main() -> None:
         print(f"Цитат, которых нет дословно в источнике: {hallucinated}")
 
     print("\n=== Итог: что проверить в", args.derived)
-    for p, (r, found) in results.items():
-        if r.verdict not in NEEDS_ATTENTION:
+    for p, (verdict, r, quotes) in results.items():
+        if verdict not in NEEDS_ATTENTION:
             continue
         print(f"\nАбзац {p}: {derived.paragraphs[p]}")
-        if r.verdict == "contradicts":
+        if verdict == "contradicts":
             print(f"  → {r.new_text}")
         else:
             print("  ⚠ источники противоречат друг другу, правку не предлагаем:")
-        for file, text in quoted_sources(r, found):
+        for file, text in quotes:
             print(f"  {file}: «{text}»")
 
     if args.labels:
@@ -132,11 +145,10 @@ def main() -> None:
     if args.json:
         section_of = {u.paragraph: (u.section[-1] if u.section else "") for u in derived.units}
         suggestions, flags = [], []
-        for p, (r, found) in results.items():
-            quotes = quoted_sources(r, found)
-            if r.verdict == "contradicts":
+        for p, (verdict, r, quotes) in results.items():
+            if verdict == "contradicts":
                 suggestions.append(syncback.truth_suggestion(section_of.get(p, ""), derived.raw[p], r.analysis, r.new_text, quotes))
-            elif r.verdict == "sources_conflict":
+            elif verdict == "sources_conflict":
                 flags.append(syncback.conflict_flag(section_of.get(p, ""), derived.raw[p], quotes))
         out = syncback.response(suggestions, flags)
         args.json.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")

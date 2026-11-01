@@ -24,7 +24,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="qwen3:8b")
     parser.add_argument("--data", default=ROOT / "data/eval/gold_v1_holdout.jsonl", type=Path)
-    parser.add_argument("--prompt", default=ROOT / "prompts/truth_v1.md", type=Path)
+    parser.add_argument("--prompt", default=ROOT / "prompts/truth_v2.md", type=Path)
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
 
