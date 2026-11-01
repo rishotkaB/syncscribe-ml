@@ -65,3 +65,11 @@ class TruthQuick(BaseModel):
     """Быстрый режим: только вердикт, полный вызов — для contradicts и sources_conflict."""
 
     verdict: Verdict
+
+
+class ConflictCheck(BaseModel):
+    """Проверка кандидата в «источники спорят»: правда ли цитаты про один и тот же объект и расходятся."""
+
+    analysis: str = Field(description="1-2 предложения: о каком объекте каждая цитата и что она утверждает")
+    same_object: bool = Field(description="Обе цитаты говорят о том же объекте, что и фрагмент")
+    values_differ: bool = Field(description="Цитаты утверждают об этом объекте разное")

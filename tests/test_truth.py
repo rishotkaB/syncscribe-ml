@@ -75,6 +75,18 @@ def test_combine_not_covered_file_does_not_create_conflict():
     assert combine({"admin.md": _r("not_covered"), "faq.md": _r("consistent")}, groups)[0] == "consistent"
 
 
+
+def test_combine_rejected_conflict_trusts_confirming_file():
+    # Спор не подтвердился: противоречие нашлось в куске про другой объект, абзац верен.
+    groups = by_file(load_chunks(SOURCES))
+    per_file = {"admin.md": _r("consistent", quote="Время жизни сессии: 8 часов."), "faq.md": _r("contradicts", "X.")}
+    assert combine(per_file, groups)[0] == "sources_conflict"
+    assert combine(per_file, groups, allow_conflict=False)[0] == "consistent"
+    two_edits = {"admin.md": _r("contradicts", "A."), "faq.md": _r("contradicts", "B.")}
+    verdict, result, _ = combine(two_edits, groups, allow_conflict=False)
+    assert verdict == "contradicts" and result.new_text == "A."
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

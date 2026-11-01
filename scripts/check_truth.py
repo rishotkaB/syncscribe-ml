@@ -24,7 +24,7 @@ from pathlib import Path
 
 from syncscribe_ml import syncback
 from syncscribe_ml.diff import parse_markdown
-from syncscribe_ml.llm import add_llm_args, analyze_truth, classify_truth, configure, load_prompt
+from syncscribe_ml.llm import confirm_conflict, add_llm_args, analyze_truth, classify_truth, configure, load_prompt
 from syncscribe_ml.parse import load_document
 from syncscribe_ml.retrieval import FragmentIndex
 from syncscribe_ml.truth import NEEDS_ATTENTION, bad_quotes, by_file, combine, load_chunks, search_text
@@ -40,6 +40,7 @@ def main() -> None:
     add_llm_args(parser)
     parser.add_argument("--prompt", default=ROOT / "prompts/truth_v2.md", type=Path)
     parser.add_argument("--quick-prompt", default=ROOT / "prompts/truth_quick_v2.md", type=Path)
+    parser.add_argument("--conflict-prompt", default=ROOT / "prompts/conflict_v1.md", type=Path)
     parser.add_argument("--top-k", type=int, default=3, help="Сколько кусков источников показываем модели на один абзац")
     parser.add_argument("--mode", default="hybrid", choices=["hybrid", "dense", "bm25"])
     parser.add_argument("--fast", action="store_true", help="Сначала короткий вызов «только вердикт», полный — если надо править")
@@ -57,11 +58,12 @@ def main() -> None:
     fragment_ids = [i for i in range(len(derived.paragraphs)) if i not in headings]
     prompt = load_prompt(args.prompt)
     quick_prompt = load_prompt(args.quick_prompt) if args.fast else None
+    conflict_prompt = load_prompt(args.conflict_prompt)
     print(f"Кусков в источниках: {len(chunks)} ({len(args.sources)} файл.), абзацев в документе: {len(fragment_ids)}\n")
 
     verdicts: dict[int, str] = {}
     results: dict[int, tuple] = {}  # абзац → (вердикт, ответ с правкой или None, [(файл, цитата)])
-    calls = quick_calls = 0
+    calls = quick_calls = conflict_calls = rejected_conflicts = 0
     llm_seconds = 0.0
     hallucinated = 0
     for p in fragment_ids:
@@ -98,6 +100,18 @@ def main() -> None:
             print(f"абзац {p:>3}: ОШИБКА {repr(exc).splitlines()[0]}")
             continue
         verdict, result, quotes = combine(per_file, groups)
+        if verdict == "sources_conflict" and len({f for f, _ in quotes}) > 1:
+            conflict_calls += 1
+            try:
+                confirmed, latency = confirm_conflict(args.model, conflict_prompt, fragment, quotes)
+            except Exception as exc:
+                print(f"абзац {p:>3}: ОШИБКА проверки спора {repr(exc).splitlines()[0]}")
+                confirmed, latency = True, 0.0  # не смогли проверить — пусть человек посмотрит
+            llm_seconds += latency
+            log.append(f"спор? {latency:.1f}s")
+            if not confirmed:
+                rejected_conflicts += 1
+                verdict, result, quotes = combine(per_file, groups, allow_conflict=False)
         verdicts[p] = verdict
         results[p] = (verdict, result, quotes)
         bad = sum(len(bad_quotes(r, groups[f])) for f, r in per_file.items() if r.verdict != "not_covered")
@@ -106,7 +120,8 @@ def main() -> None:
         many = f", файлов: {len(groups)}" if len(groups) > 1 else ""
         print(f"абзац {p:>3}: {MARK[verdict]} ({' + '.join(log)}{many}){warn}")
 
-    print(f"\nВызовов LLM: полных {calls}" + (f" + коротких: {quick_calls}" if args.fast else ""))
+    print(f"\nВызовов LLM: полных {calls}" + (f" + коротких: {quick_calls}" if args.fast else "")
+          + f" + проверок спора: {conflict_calls} (отклонено {rejected_conflicts})")
     print(f"Время: всего {time.perf_counter() - started:.0f}s, из них в LLM {llm_seconds:.0f}s")
     print("Вердикты:", ", ".join(f"{k} {v}" for k, v in Counter(verdicts.values()).most_common()))
     if hallucinated:

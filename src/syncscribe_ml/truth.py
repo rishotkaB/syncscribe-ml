@@ -78,11 +78,15 @@ def by_file(chunks: list[Chunk]) -> dict[str, list[Chunk]]:
     return groups
 
 
-def combine(per_file: dict[str, TruthResult], chunks_of: dict[str, list[Chunk]]) -> tuple[str, TruthResult | None, list[tuple[str, str]]]:
+def combine(
+    per_file: dict[str, TruthResult], chunks_of: dict[str, list[Chunk]], allow_conflict: bool = True
+) -> tuple[str, TruthResult | None, list[tuple[str, str]]]:
     """Ответы модели по каждому файлу → (вердикт, ответ с правкой или None, [(файл, цитата)]).
 
     Спор: один файл подтверждает абзац, а другой ему противоречит, или два файла требуют разных правок.
     Тогда правку не предлагаем, показываем цитаты из каждого спорящего файла.
+    allow_conflict=False — спор не подтвердился (цитаты про разные объекты): решаем без него.
+    Подтверждающий файл тогда главнее: противоречие нашлось в куске про другой объект.
     """
     verdicts = {f: r.verdict for f, r in per_file.items()}
     contra = [f for f, v in verdicts.items() if v == "contradicts"]
@@ -90,14 +94,15 @@ def combine(per_file: dict[str, TruthResult], chunks_of: dict[str, list[Chunk]])
     own_conflict = [f for f, v in verdicts.items() if v == "sources_conflict"]
 
     def quotes(files: list[str]) -> list[tuple[str, str]]:
-        return [q for f in files for q in quoted_sources(per_file[f], chunks_of[f])]
+        # Если модель не дала цитату (бывает у «consistent»), показываем лучший найденный кусок файла.
+        return [q for f in files for q in (quoted_sources(per_file[f], chunks_of[f]) or [(f, chunks_of[f][0].text)])]
 
     edits = {per_file[f].new_text.strip() for f in contra}
-    if (contra and agree) or len(edits) > 1:
+    if allow_conflict and ((contra and agree) or len(edits) > 1):
         return "sources_conflict", None, quotes(contra + agree)
     if own_conflict:  # противоречие внутри одного файла
         return "sources_conflict", None, quotes(own_conflict)
-    if contra:
+    if contra and not agree:
         return "contradicts", per_file[contra[0]], quotes(contra)
     if agree:
         return "consistent", None, []

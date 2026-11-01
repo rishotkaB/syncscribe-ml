@@ -23,7 +23,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from .schema import ImpactResult, QuickResult, TruthQuick, TruthResult
+from .schema import ConflictCheck, ImpactResult, QuickResult, TruthQuick, TruthResult
 
 PROVIDERS = ("ollama", "openai")
 
@@ -164,3 +164,16 @@ def analyze_truth(model: str, system_prompt: str, chunks: list[str], fragment: s
 def classify_truth(model: str, system_prompt: str, chunks: list[str], fragment: str) -> tuple[str, float]:
     result, elapsed, _ = _chat(model, system_prompt, build_truth_message(chunks, fragment), TruthQuick)
     return result.verdict, elapsed
+
+
+def confirm_conflict(model: str, system_prompt: str, fragment: str, quotes: list[tuple[str, str]]) -> tuple[bool, float]:
+    """Спор источников подтверждаем отдельным коротким вопросом: модель видит только фрагмент и цитаты.
+
+    Правило «один файл подтверждает, другой противоречит» срабатывает и тогда, когда модель по ошибке
+    сочла противоречием кусок про ДРУГОЙ объект («размер файла» вместо «размера выгрузки»).
+    Узкий вопрос «это про одно и то же и значения разные?» модель решает надёжнее.
+    """
+    lines = "\n".join(f"- ({file}) {text}" for file, text in quotes)
+    user = f"ФРАГМЕНТ:\n{fragment}\n\nЦИТАТЫ ИЗ ИСТОЧНИКОВ:\n{lines}"
+    result, elapsed, _ = _chat(model, system_prompt, user, ConflictCheck)
+    return result.same_object and result.values_differ, elapsed
