@@ -123,8 +123,11 @@ def suggest(
 
     done = [0]
 
+    hits_of = index.search_many([p.text for p in paragraphs], k=top_k)  # все эмбеддинги до первого вызова LLM
+    groups_of = {id(p): by_file([chunks[h.index] for h in hits]) for p, hits in zip(paragraphs, hits_of)}
+
     def check(p: Paragraph):
-        groups = by_file([chunks[h.index] for h in index.search(p.text, k=top_k)])
+        groups = groups_of[id(p)]
         j = judge(model, prompts, p.text, groups, fast)
         done[0] += 1
         if done[0] % 20 == 0 or done[0] == len(paragraphs):

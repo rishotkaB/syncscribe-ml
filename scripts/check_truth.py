@@ -67,9 +67,11 @@ def main() -> None:
     calls: Counter = Counter()
     llm_seconds = 0.0
     hallucinated = 0
+    # Все эмбеддинги запросов одним пакетом до вызовов LLM: Ollama не перегружает модели туда-обратно.
+    hits_of = dict(zip(fragment_ids, index.search_many([derived.paragraphs[p] for p in fragment_ids], k=args.top_k)))
     for p in fragment_ids:
         fragment = derived.paragraphs[p]
-        groups = by_file([chunks[h.index] for h in index.search(fragment, k=args.top_k)])
+        groups = by_file([chunks[h.index] for h in hits_of[p]])
         try:
             j = judge(args.model, prompts, fragment, groups, args.fast)
         except Exception as exc:  # один упавший вызов не должен останавливать прогон
