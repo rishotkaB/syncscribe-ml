@@ -18,7 +18,6 @@ RRF не требует подгонять шкалы оценок друг к �
 from __future__ import annotations
 
 import math
-import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -69,29 +68,9 @@ class BM25:
 # ---------- dense ----------
 
 def embed(texts: list[str], model: str = EMBED_MODEL) -> list[list[float]]:
-    """Эмбеддинги BGE-M3: локально через Ollama или через OpenAI-совместимый /embeddings (vLLM, TEI, Ollama /v1).
+    import ollama
 
-    Провайдер тот же, что у LLM (LLM_PROVIDER), но адрес может быть свой: EMBED_BASE_URL
-    (модель эмбеддингов часто крутится отдельно), иначе LLM_BASE_URL. Имя модели — EMBED_MODEL.
-    """
-    model = os.environ.get("EMBED_MODEL", model)
-    if os.environ.get("LLM_PROVIDER", "ollama") != "openai":
-        import ollama
-
-        return [list(v) for v in ollama.embed(model=model, input=texts).embeddings]
-
-    import httpx
-
-    url = (os.environ.get("EMBED_BASE_URL") or os.environ["LLM_BASE_URL"]).rstrip("/") + "/embeddings"
-    key = os.environ.get("EMBED_API_KEY") or os.environ.get("LLM_API_KEY")
-    headers = {"Authorization": f"Bearer {key}"} if key else {}
-    vectors: list[list[float]] = []
-    for i in range(0, len(texts), 64):  # большими пачками API часто отказывают
-        response = httpx.post(url, json={"model": model, "input": texts[i:i + 64]}, headers=headers, timeout=120)
-        response.raise_for_status()
-        data = sorted(response.json()["data"], key=lambda d: d["index"])
-        vectors += [d["embedding"] for d in data]
-    return vectors
+    return [list(v) for v in ollama.embed(model=model, input=texts).embeddings]
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -117,21 +96,11 @@ class FragmentIndex:
         self.bm25 = BM25(fragments) if mode in ("hybrid", "bm25") else None
         self.vectors = embed(fragments, embed_model) if mode in ("hybrid", "dense") else None
 
-    def search_many(self, queries: list[str], k: int = 3) -> list[list[Hit]]:
-        """Как search, но эмбеддинги всех запросов считаем одним пакетом заранее.
-
-        На одной видеокарте (8 ГБ) Ollama может держать в памяти только одну модель. Если чередовать
-        «эмбеддинг запроса → вызов LLM» на каждом абзаце, она перегружает bge-m3 и qwen3 туда-обратно,
-        и каждый вызов становится в разы дольше. Пакетом: сначала все эмбеддинги, потом только LLM.
-        """
-        vectors = embed(queries, self.embed_model) if self.vectors is not None and queries else [None] * len(queries)
-        return [self.search(q, k, query_vector=v) for q, v in zip(queries, vectors)]
-
-    def search(self, query: str, k: int = 3, query_vector: list[float] | None = None) -> list[Hit]:
+    def search(self, query: str, k: int = 3) -> list[Hit]:
         n = len(self.fragments)
         dense = None
         if self.vectors is not None:
-            q = query_vector if query_vector is not None else embed([query], self.embed_model)[0]
+            q = embed([query], self.embed_model)[0]
             dense = [cosine(v, q) for v in self.vectors]
         bm25 = self.bm25.scores(query) if self.bm25 else None
 

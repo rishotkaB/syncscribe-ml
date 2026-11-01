@@ -42,7 +42,7 @@ python scripts/eval_truth.py --provider openai --base-url https://openrouter.ai/
 | Путь | Что это |
 |---|---|
 | `data/eval/gold_v0.jsonl` | Eval-набор: 20 синтетических примеров, описание в `data/eval/README.md` |
-| `src/syncscribe_ml/prompts/impact_v1.md` | Системный промпт. Новая версия промпта кладётся новым файлом (`impact_v2.md`), старый не трогаем |
+| `prompts/impact_v1.md` | Системный промпт. Новая версия промпта кладётся новым файлом (`impact_v2.md`), старый не трогаем |
 | `src/syncscribe_ml/schema.py` | Схема ответа модели (JSON Schema для Ollama/vLLM и валидация через pydantic) |
 | `src/syncscribe_ml/llm.py` | Один вызов модели на пару (изменение источника, фрагмент) |
 | `src/syncscribe_ml/metrics.py` | Accuracy, precision, recall, traceability, латентность |
@@ -55,8 +55,6 @@ python scripts/eval_truth.py --provider openai --base-url https://openrouter.ai/
 | `scripts/make_large_example.py` | Большой синтетический пример для замера скорости: `data/large/` (источник 15 разделов, 13 изменений; документ 198 абзацев, 39 затронуты) |
 | `scripts/check_truth.py` | Режим «источник истины»: документ + один или несколько файлов с верными данными → правки (`contradicts`) и пометки «источники спорят» без правки (`--fast`, `--labels`, `--json`) |
 | `scripts/eval_truth.py` | Режим «источник истины» на eval-наборах: модель видит только новую версию источника, сравнение с режимом diff |
-| `src/syncscribe_ml/service.py` | Точка входа для продукта: `suggest(document_text, source_text, format, model)` → правки в формате SyncBack |
-| `integrations/syncback/` | Адаптер под порт `LLMClient` в SyncBack, проверка через их маппер, инструкция подключения |
 | `src/syncscribe_ml/syncback.py` | Перевод наших правок в формат ответа бэкенда SyncBack (`{"suggestions": [...]}`) |
 | `scripts/eval_retrieval.py` | recall@k поиска на 50 примерах (`--mode hybrid/dense/bm25`) |
 | `data/diff/` | Пример для этапа 3: руководство v1/v2 и производный документ |

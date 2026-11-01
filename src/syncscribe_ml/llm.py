@@ -26,8 +26,6 @@ from pydantic import BaseModel
 from .schema import ConflictCheck, ImpactResult, QuickResult, TruthQuick, TruthResult
 
 PROVIDERS = ("ollama", "openai")
-# Промпты лежат внутри пакета, чтобы работать и после обычного pip install (например, в SyncBack).
-PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 
 def load_prompt(path: str | Path) -> str:
@@ -75,9 +73,6 @@ def _ollama(model: str, messages: list[dict], schema: type[BaseModel], think: bo
     return response.message.content, response.message.thinking or ""
 
 
-_NO_REASONING_EFFORT: list = []  # не пусто → API отверг reasoning_effort="none"
-
-
 def _openai(model: str, messages: list[dict], schema: type[BaseModel], think: bool) -> tuple[str, str]:
     import httpx  # приходит вместе с библиотекой ollama, отдельная зависимость не нужна
 
@@ -89,20 +84,11 @@ def _openai(model: str, messages: list[dict], schema: type[BaseModel], think: bo
         "response_format": {"type": "json_schema", "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()}},
     }
     if "qwen3" in model.lower():
-        # Qwen3: включить или выключить рассуждения.
-        # vLLM слушает chat_template_kwargs; Ollama через /v1 его игнорирует (проверено 01.11: модель
-        # рассуждала на каждом вызове, 5–20 с вместо долей секунды), но слушает reasoning_effort="none".
+        # Qwen3 на vLLM / Ollama: включить или выключить рассуждения. Остальные API лишний ключ игнорируют.
         body["chat_template_kwargs"] = {"enable_thinking": think}
-        if not think and not _NO_REASONING_EFFORT:
-            body["reasoning_effort"] = "none"
     headers = {"Authorization": f"Bearer {os.environ['LLM_API_KEY']}"} if os.environ.get("LLM_API_KEY") else {}
     url = os.environ["LLM_BASE_URL"].rstrip("/") + "/chat/completions"
     response = httpx.post(url, json=body, headers=headers, timeout=180)
-    if response.status_code in (400, 422) and "reasoning_effort" in body:
-        # API не знает значения "none" (так бывает у vLLM): больше его не шлём, повторяем без него.
-        _NO_REASONING_EFFORT.append(True)
-        body.pop("reasoning_effort")
-        response = httpx.post(url, json=body, headers=headers, timeout=180)
     response.raise_for_status()
     message = response.json()["choices"][0]["message"]
     return message.get("content") or "", message.get("reasoning_content") or message.get("reasoning") or ""

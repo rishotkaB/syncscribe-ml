@@ -69,7 +69,7 @@ def truth_suggestion(section_ref: str, old_text: str, analysis: str, new_text: s
     """Абзац противоречит источнику истины → правка modify; в обосновании цитата и файл."""
     rationale = analysis.strip()
     for file, text in quotes:
-        rationale += f" Источник ({file}): «{text}»" if file else f" Источник: «{text}»"
+        rationale += f" Источник ({file}): «{text}»"
     return {
         "section_ref": section_ref,
         "change_type": "modify",
