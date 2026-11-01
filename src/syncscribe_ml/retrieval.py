@@ -18,6 +18,7 @@ RRF не требует подгонять шкалы оценок друг к �
 from __future__ import annotations
 
 import math
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -68,9 +69,29 @@ class BM25:
 # ---------- dense ----------
 
 def embed(texts: list[str], model: str = EMBED_MODEL) -> list[list[float]]:
-    import ollama
+    """Эмбеддинги BGE-M3: локально через Ollama или через OpenAI-совместимый /embeddings (vLLM, TEI, Ollama /v1).
 
-    return [list(v) for v in ollama.embed(model=model, input=texts).embeddings]
+    Провайдер тот же, что у LLM (LLM_PROVIDER), но адрес может быть свой: EMBED_BASE_URL
+    (модель эмбеддингов часто крутится отдельно), иначе LLM_BASE_URL. Имя модели — EMBED_MODEL.
+    """
+    model = os.environ.get("EMBED_MODEL", model)
+    if os.environ.get("LLM_PROVIDER", "ollama") != "openai":
+        import ollama
+
+        return [list(v) for v in ollama.embed(model=model, input=texts).embeddings]
+
+    import httpx
+
+    url = (os.environ.get("EMBED_BASE_URL") or os.environ["LLM_BASE_URL"]).rstrip("/") + "/embeddings"
+    key = os.environ.get("EMBED_API_KEY") or os.environ.get("LLM_API_KEY")
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    vectors: list[list[float]] = []
+    for i in range(0, len(texts), 64):  # большими пачками API часто отказывают
+        response = httpx.post(url, json={"model": model, "input": texts[i:i + 64]}, headers=headers, timeout=120)
+        response.raise_for_status()
+        data = sorted(response.json()["data"], key=lambda d: d["index"])
+        vectors += [d["embedding"] for d in data]
+    return vectors
 
 
 def cosine(a: list[float], b: list[float]) -> float:

@@ -12,7 +12,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .diff import parse_markdown
@@ -107,3 +108,78 @@ def combine(
     if agree:
         return "consistent", None, []
     return "not_covered", None, []
+
+
+# ---------- проверка одного абзаца целиком ----------
+
+@dataclass
+class Prompts:
+    full: str
+    quick: str
+    conflict: str
+
+    @classmethod
+    def default(cls) -> "Prompts":
+        from .llm import PROMPTS_DIR, load_prompt
+
+        return cls(load_prompt(PROMPTS_DIR / "truth_v2.md"), load_prompt(PROMPTS_DIR / "truth_quick_v2.md"),
+                   load_prompt(PROMPTS_DIR / "conflict_v1.md"))
+
+
+@dataclass
+class Judgement:
+    verdict: str
+    result: TruthResult | None                  # ответ с правкой (только для contradicts)
+    quotes: list[tuple[str, str]]               # [(файл, цитата)]
+    log: list[str] = field(default_factory=list)  # время вызовов для печати
+    calls: Counter = field(default_factory=Counter)  # quick / full / conflict / conflict_rejected
+    seconds: float = 0.0
+    bad_quotes: int = 0
+
+
+def judge(model: str, prompts: Prompts, fragment: str, groups: dict[str, list[Chunk]], fast: bool) -> Judgement:
+    """Вердикт по одному абзацу документа. groups — найденные куски источников по файлам.
+
+    1. --fast: короткий вызов «только вердикт» по каждому файлу; если тревоги нет — готово.
+    2. Полный вызов по «тревожным» файлам (и по подтверждающим, если файлов несколько).
+    3. Ответы по файлам сводит правило combine; кандидата в спор подтверждаем узким вопросом.
+    """
+    from .llm import analyze_truth, classify_truth, confirm_conflict
+
+    j = Judgement("not_covered", None, [])
+    if not groups:
+        return j
+    files = list(groups)
+    if fast:
+        quick = {}
+        for f in groups:
+            quick[f], latency = classify_truth(model, prompts.quick, [c.for_model() for c in groups[f]], fragment)
+            j.calls["quick"] += 1
+            j.seconds += latency
+            j.log.append(f"быстро {latency:.1f}s")
+        flagged = [f for f, v in quick.items() if v in NEEDS_ATTENTION]
+        if not flagged:
+            j.verdict = "consistent" if "consistent" in quick.values() else "not_covered"
+            return j
+        # Цитаты подтверждающих файлов понадобятся, если окажется, что источники спорят.
+        files = flagged + [f for f, v in quick.items() if v == "consistent" and len(groups) > 1]
+    per_file = {}
+    for f in files:
+        per_file[f], latency = analyze_truth(model, prompts.full, [c.for_model() for c in groups[f]], fragment)
+        j.calls["full"] += 1
+        j.seconds += latency
+        j.log.append(f"{latency:.1f}s")
+    j.verdict, j.result, j.quotes = combine(per_file, groups)
+    if j.verdict == "sources_conflict" and len({f for f, _ in j.quotes}) > 1:
+        j.calls["conflict"] += 1
+        try:
+            confirmed, latency = confirm_conflict(model, prompts.conflict, fragment, j.quotes)
+        except Exception:
+            confirmed, latency = True, 0.0  # не смогли проверить — пусть человек посмотрит
+        j.seconds += latency
+        j.log.append(f"спор? {latency:.1f}s")
+        if not confirmed:
+            j.calls["conflict_rejected"] += 1
+            j.verdict, j.result, j.quotes = combine(per_file, groups, allow_conflict=False)
+    j.bad_quotes = sum(len(bad_quotes(r, groups[f])) for f, r in per_file.items() if r.verdict != "not_covered")
+    return j

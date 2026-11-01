@@ -2,7 +2,7 @@
 
 Пример:
     python scripts/run_eval.py --model qwen3:8b
-    python scripts/run_eval.py --model qwen3:8b --prompt prompts/impact_v1.md --think
+    python scripts/run_eval.py --model qwen3:8b --prompt src/syncscribe_ml/prompts/impact_v1.md --think
     python scripts/run_eval.py --edits-from results/<run>.jsonl   # пересобрать edits.md без вызова модели
 
 Что получится в results/:
@@ -18,7 +18,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from syncscribe_ml.llm import add_llm_args, analyze, configure, load_prompt
+from syncscribe_ml.llm import PROMPTS_DIR, add_llm_args, analyze, configure, load_prompt
 from syncscribe_ml.metrics import compute
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,7 +28,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     add_llm_args(parser)
     parser.add_argument("--data", default=ROOT / "data/eval/gold_v0.jsonl", type=Path)
-    parser.add_argument("--prompt", default=ROOT / "prompts/impact_v2.md", type=Path)
+    parser.add_argument("--prompt", default=PROMPTS_DIR / "impact_v2.md", type=Path)
     parser.add_argument("--think", action="store_true", help="Включить режим рассуждений модели (медленнее)")
     parser.add_argument("--limit", type=int, default=None, help="Прогнать только первые N примеров")
     parser.add_argument("--edits-from", type=Path, default=None,

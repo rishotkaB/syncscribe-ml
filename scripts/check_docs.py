@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from syncscribe_ml.diff import parse_markdown, to_source_pairs
-from syncscribe_ml.llm import add_llm_args, analyze, classify, configure, load_prompt
+from syncscribe_ml.llm import PROMPTS_DIR, add_llm_args, analyze, classify, configure, load_prompt
 from syncscribe_ml.parse import load_document
 from syncscribe_ml.retrieval import FragmentIndex, deletion_flags, is_deletion, pair_candidates
 from syncscribe_ml import syncback
@@ -35,13 +35,13 @@ def main() -> None:
     parser.add_argument("new")
     parser.add_argument("derived", help="Производный документ, который проверяем")
     add_llm_args(parser)
-    parser.add_argument("--prompt", default=ROOT / "prompts/impact_v2.md", type=Path)
+    parser.add_argument("--prompt", default=PROMPTS_DIR / "impact_v2.md", type=Path)
     parser.add_argument("--top-k", type=int, default=5, help="Сколько кандидатов на одно изменение источника отдаём в LLM")
     parser.add_argument("--mode", default="hybrid", choices=["hybrid", "dense", "bm25"])
     parser.add_argument("--all", action="store_true", help="Без поиска: каждое изменение × каждый абзац")
     parser.add_argument("--json", type=Path, default=None, help="Сохранить правки в файл в формате ответа SyncBack")
     parser.add_argument("--fast", action="store_true", help="Сначала короткий вызов «да/нет», полный только для «да»")
-    parser.add_argument("--quick-prompt", default=ROOT / "prompts/impact_quick_v1.md", type=Path)
+    parser.add_argument("--quick-prompt", default=PROMPTS_DIR / "impact_quick_v1.md", type=Path)
     parser.add_argument("--labels", type=Path, default=None, help="Разметка {paragraph, impacted}: посчитать точность и полноту")
     args = parser.parse_args()
     configure(args)

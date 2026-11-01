@@ -26,6 +26,8 @@ from pydantic import BaseModel
 from .schema import ConflictCheck, ImpactResult, QuickResult, TruthQuick, TruthResult
 
 PROVIDERS = ("ollama", "openai")
+# Промпты лежат внутри пакета, чтобы работать и после обычного pip install (например, в SyncBack).
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 
 def load_prompt(path: str | Path) -> str:
