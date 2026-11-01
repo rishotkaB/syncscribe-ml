@@ -18,6 +18,8 @@ import asyncio
 import io
 import json
 import logging
+import os
+import signal
 import sys
 import uuid
 from pathlib import Path
@@ -55,6 +57,9 @@ def main() -> None:
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("syncscribe_ml.service").setLevel(logging.INFO)  # прогресс каждые 20 абзацев
+    # Конвейер работает в отдельном потоке, и обычный Ctrl+C ждёт его до конца. Выходим сразу.
+    signal.signal(signal.SIGINT, lambda *_: (print("\nОстановлено"), os._exit(130)))
 
     sys.path.insert(0, str(args.syncback.resolve()))
     sys.path.insert(0, str(HERE))

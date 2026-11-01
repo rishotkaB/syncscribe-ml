@@ -16,6 +16,7 @@ SyncBack (бэкенд коллег) отдаёт в модель докумен
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections import Counter
@@ -27,6 +28,7 @@ from .diff import parse_markdown
 from .retrieval import FragmentIndex
 from .truth import Chunk, NEEDS_ATTENTION, Prompts, by_file, judge, search_text
 
+logger = logging.getLogger("syncscribe_ml.service")
 MARKDOWN_FORMATS = {"md", "markdown"}
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+")
 
@@ -119,9 +121,15 @@ def suggest(
     suggestions, flags = [], []
     workers = workers or int(os.environ.get("ML_PIPELINE_WORKERS", "1"))
 
+    done = [0]
+
     def check(p: Paragraph):
         groups = by_file([chunks[h.index] for h in index.search(p.text, k=top_k)])
-        return judge(model, prompts, p.text, groups, fast)
+        j = judge(model, prompts, p.text, groups, fast)
+        done[0] += 1
+        if done[0] % 20 == 0 or done[0] == len(paragraphs):
+            logger.info("проверено абзацев: %d из %d", done[0], len(paragraphs))
+        return j
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         judgements = list(pool.map(check, paragraphs))  # порядок абзацев сохраняется
