@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from syncscribe_ml.diff import parse_markdown, to_source_pairs
-from syncscribe_ml.llm import analyze, classify, load_prompt
+from syncscribe_ml.llm import add_llm_args, analyze, classify, configure, load_prompt
 from syncscribe_ml.parse import load_document
 from syncscribe_ml.retrieval import FragmentIndex, deletion_flags, is_deletion, pair_candidates
 from syncscribe_ml import syncback
@@ -34,7 +34,7 @@ def main() -> None:
     parser.add_argument("old")
     parser.add_argument("new")
     parser.add_argument("derived", help="Производный документ, который проверяем")
-    parser.add_argument("--model", default="qwen3:8b")
+    add_llm_args(parser)
     parser.add_argument("--prompt", default=ROOT / "prompts/impact_v2.md", type=Path)
     parser.add_argument("--top-k", type=int, default=5, help="Сколько кандидатов на одно изменение источника отдаём в LLM")
     parser.add_argument("--mode", default="hybrid", choices=["hybrid", "dense", "bm25"])
@@ -44,6 +44,7 @@ def main() -> None:
     parser.add_argument("--quick-prompt", default=ROOT / "prompts/impact_quick_v1.md", type=Path)
     parser.add_argument("--labels", type=Path, default=None, help="Разметка {paragraph, impacted}: посчитать точность и полноту")
     args = parser.parse_args()
+    configure(args)
     sys.stdout.reconfigure(encoding="utf-8")
 
     started = time.perf_counter()

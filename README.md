@@ -21,6 +21,22 @@ ML-часть SyncScribe. Модуль определяет, затронут л
    python scripts/run_eval.py --model qwen3:8b
    ```
 
+## Модель: локально или по API
+
+Все скрипты, которые зовут модель, принимают `--provider` и `--base-url`:
+
+- `--provider ollama` (по умолчанию) — локальная Ollama;
+- `--provider openai --base-url <адрес>/v1` — любой OpenAI-совместимый API: vLLM на сервере, Ollama через `/v1`, облачные API. Ключ задаётся переменной `LLM_API_KEY`, не флагом.
+
+Пример (PowerShell):
+```
+$env:LLM_API_KEY = "ключ"
+python scripts/eval_truth.py --provider openai --base-url https://openrouter.ai/api/v1 --model qwen/qwen3-14b
+```
+Те же настройки можно задать переменными `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`.
+
+**Облачные API — только для разработки и только на синтетических данных.** Данные клиентов под NDA отправляются только в on-prem модель.
+
 ## Что где
 
 | Путь | Что это |

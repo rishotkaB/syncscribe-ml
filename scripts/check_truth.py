@@ -24,7 +24,7 @@ from pathlib import Path
 
 from syncscribe_ml import syncback
 from syncscribe_ml.diff import parse_markdown
-from syncscribe_ml.llm import analyze_truth, classify_truth, load_prompt
+from syncscribe_ml.llm import add_llm_args, analyze_truth, classify_truth, configure, load_prompt
 from syncscribe_ml.parse import load_document
 from syncscribe_ml.retrieval import FragmentIndex
 from syncscribe_ml.truth import NEEDS_ATTENTION, bad_quotes, by_file, combine, load_chunks, search_text
@@ -37,7 +37,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("derived", help="Документ, который проверяем и правим")
     parser.add_argument("sources", nargs="+", help="Файлы-источники истины")
-    parser.add_argument("--model", default="qwen3:8b")
+    add_llm_args(parser)
     parser.add_argument("--prompt", default=ROOT / "prompts/truth_v2.md", type=Path)
     parser.add_argument("--quick-prompt", default=ROOT / "prompts/truth_quick_v2.md", type=Path)
     parser.add_argument("--top-k", type=int, default=3, help="Сколько кусков источников показываем модели на один абзац")
@@ -46,6 +46,7 @@ def main() -> None:
     parser.add_argument("--labels", type=Path, default=None, help="Разметка {paragraph, expected}: точность и полнота")
     parser.add_argument("--json", type=Path, default=None, help="Сохранить правки в формате ответа SyncBack")
     args = parser.parse_args()
+    configure(args)
     sys.stdout.reconfigure(encoding="utf-8")
 
     started = time.perf_counter()

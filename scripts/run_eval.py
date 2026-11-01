@@ -18,7 +18,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from syncscribe_ml.llm import analyze, load_prompt
+from syncscribe_ml.llm import add_llm_args, analyze, configure, load_prompt
 from syncscribe_ml.metrics import compute
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="qwen3:8b")
+    add_llm_args(parser)
     parser.add_argument("--data", default=ROOT / "data/eval/gold_v0.jsonl", type=Path)
     parser.add_argument("--prompt", default=ROOT / "prompts/impact_v2.md", type=Path)
     parser.add_argument("--think", action="store_true", help="Включить режим рассуждений модели (медленнее)")
@@ -34,6 +34,7 @@ def main() -> None:
     parser.add_argument("--edits-from", type=Path, default=None,
                         help="Не запускать модель, а пересобрать edits.md из готового results/<run>.jsonl")
     args = parser.parse_args()
+    configure(args)
 
     # В консоли Windows иначе бывают проблемы с кириллицей.
     sys.stdout.reconfigure(encoding="utf-8")
@@ -79,7 +80,7 @@ def main() -> None:
               + (f" {latency:.1f}s" if latency is not None else f" {error}"))
 
     summary = compute(rows)
-    summary.update({"model": args.model, "prompt": args.prompt.name, "think": args.think, "data": args.data.name})
+    summary.update({"provider": args.provider, "model": args.model, "prompt": args.prompt.name, "think": args.think, "data": args.data.name})
 
     with open(out_dir / f"{run_name}.jsonl", "w", encoding="utf-8") as f:
         for row in rows:

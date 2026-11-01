@@ -14,7 +14,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from syncscribe_ml.llm import analyze_truth, load_prompt
+from syncscribe_ml.llm import add_llm_args, analyze_truth, configure, load_prompt
 from syncscribe_ml.metrics import quote_in_source
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -22,10 +22,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="qwen3:8b")
+    add_llm_args(parser)
     parser.add_argument("--data", default=ROOT / "data/eval/gold_v1_holdout.jsonl", type=Path)
     parser.add_argument("--prompt", default=ROOT / "prompts/truth_v2.md", type=Path)
     args = parser.parse_args()
+    configure(args)
     sys.stdout.reconfigure(encoding="utf-8")
 
     examples = [json.loads(line) for line in args.data.read_text(encoding="utf-8").splitlines() if line.strip()]
