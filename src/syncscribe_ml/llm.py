@@ -23,7 +23,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from .schema import ConflictCheck, ImpactResult, QuickResult, TruthQuick, TruthResult
+from .schema import AddResult, ConflictCheck, ImpactResult, QuickResult, TruthQuick, TruthResult
 
 PROVIDERS = ("ollama", "openai")
 
@@ -156,8 +156,22 @@ def build_truth_message(chunks: list[str], fragment: str) -> str:
     return f"ИСТОЧНИКИ ИСТИНЫ:\n{sources}\n\nФРАГМЕНТ:\n{fragment}"
 
 
-def analyze_truth(model: str, system_prompt: str, chunks: list[str], fragment: str) -> tuple[TruthResult, float]:
-    result, elapsed, _ = _chat(model, system_prompt, build_truth_message(chunks, fragment), TruthResult)
+def analyze_truth(
+    model: str, system_prompt: str, chunks: list[str], fragment: str, schema: type[BaseModel] = TruthResult
+) -> tuple[TruthResult, float]:
+    """schema=TruthResultV3 — тот же ответ плюс обоснование и confidence_score (контракт 2.0)."""
+    result, elapsed, _ = _chat(model, system_prompt, build_truth_message(chunks, fragment), schema)
+    return result, elapsed
+
+
+def build_add_message(source_chunk: str, blocks: list[str]) -> str:
+    """Факт источника + несколько ближайших блоков документа (пронумерованы, чтобы модель указала место вставки)."""
+    numbered = "\n\n".join(f"[{i}] {b}" for i, b in enumerate(blocks, 1))
+    return f"ФАКТ ИЗ ИСТОЧНИКА:\n{source_chunk}\n\nБЛОКИ ДОКУМЕНТА:\n{numbered}"
+
+
+def propose_addition(model: str, system_prompt: str, source_chunk: str, blocks: list[str]) -> tuple[AddResult, float]:
+    result, elapsed, _ = _chat(model, system_prompt, build_add_message(source_chunk, blocks), AddResult)
     return result, elapsed
 
 

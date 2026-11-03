@@ -73,3 +73,35 @@ class ConflictCheck(BaseModel):
     analysis: str = Field(description="1-2 предложения: о каком объекте каждая цитата и что она утверждает")
     same_object: bool = Field(description="Обе цитаты говорят о том же объекте, что и фрагмент")
     values_differ: bool = Field(description="Цитаты утверждают об этом объекте разное")
+
+
+# ---------- контракт 2.0 с SyncBack (обмен JSON-файлами) ----------
+# Отличие от TruthResult: короткое обоснование для пользователя и оценка уверенности.
+# Оценка идёт ПОСЛЕДНЕЙ: модель ставит её, когда уже написала анализ, правку и цитату.
+
+
+class TruthResultV3(BaseModel):
+    analysis: str = Field(description="1-3 предложения: что утверждает фрагмент и что говорят источники")
+    verdict: Verdict = Field(
+        description="consistent — согласуется; contradicts — противоречит, нужна правка; "
+        "not_covered — источники об этом молчат; sources_conflict — источники противоречат друг другу"
+    )
+    new_text: str = Field(description="Исправленный фрагмент, только для contradicts; иначе пустая строка")
+    quotes: list[Quote] = Field(
+        description="Для contradicts — цитата, на которой основана правка; для sources_conflict — "
+        "цитаты из каждого спорящего источника; иначе пустой список"
+    )
+    rationale: str = Field(description="Для contradicts: одно-два предложения для пользователя, почему нужна правка; иначе пустая строка")
+    confidence_score: float = Field(ge=0, le=1, description="Для contradicts: уверенность, что правка верна, 0–1; иначе 0")
+
+
+class AddResult(BaseModel):
+    """Факт источника, о котором в документе нет ни слова: нужно ли его дописать и куда."""
+
+    analysis: str = Field(description="1-3 предложения: что сообщает источник и есть ли это уже в документе")
+    needed: bool = Field(description="Нужно ли дописать факт в документ")
+    after: int = Field(description="Номер блока документа [1], [2], ..., после которого вставить текст; 0, если не нужно")
+    new_text: str = Field(description="Только добавляемый текст в стиле документа; пустая строка, если не нужно")
+    quote: str = Field(description="Дословная цитата из источника, на которой основано добавление; пустая строка, если не нужно")
+    rationale: str = Field(description="Одно-два предложения для пользователя, почему нужно добавление; пустая строка, если не нужно")
+    confidence_score: float = Field(ge=0, le=1, description="Уверенность, что добавление верно и стоит его предложить, 0–1")

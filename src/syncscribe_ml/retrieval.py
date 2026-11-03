@@ -96,11 +96,19 @@ class FragmentIndex:
         self.bm25 = BM25(fragments) if mode in ("hybrid", "bm25") else None
         self.vectors = embed(fragments, embed_model) if mode in ("hybrid", "dense") else None
 
-    def search(self, query: str, k: int = 3) -> list[Hit]:
+    def search_many(self, queries: list[str], k: int = 3) -> list[list[Hit]]:
+        """Как search, но эмбеддинги всех запросов считаем одним пакетом до вызовов LLM."""
+        if self.vectors is not None and queries:
+            vectors = embed(queries, self.embed_model)
+        else:
+            vectors = [None] * len(queries)
+        return [self.search(q, k, query_vector=v) for q, v in zip(queries, vectors)]
+
+    def search(self, query: str, k: int = 3, query_vector: list[float] | None = None) -> list[Hit]:
         n = len(self.fragments)
         dense = None
         if self.vectors is not None:
-            q = embed([query], self.embed_model)[0]
+            q = query_vector if query_vector is not None else embed([query], self.embed_model)[0]
             dense = [cosine(v, q) for v in self.vectors]
         bm25 = self.bm25.scores(query) if self.bm25 else None
 
