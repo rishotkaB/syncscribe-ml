@@ -3,8 +3,8 @@
 import json
 from pathlib import Path
 
-from syncscribe_ml.contract import (BlockResult, ContractError, modify_suggestion, narrow, parse_request, run,
-                                    source_chunks)
+from syncscribe_ml.contract import (Block, BlockResult, ContractError, covered, modify_score, modify_suggestion, narrow,
+                                    parse_request, run, source_chunks)
 from syncscribe_ml.schema import Quote, TruthResultV3
 
 EXAMPLE = json.loads((Path(__file__).resolve().parents[1] / "data/contract/example_request.json").read_text(encoding="utf-8"))
@@ -58,6 +58,25 @@ def test_bad_quote_caps_confidence():
     assert s["confidence_score"] == 0.4 and s["old_text"] == blocks[1].text and s["insert_after"] is None
     same = TruthResultV3(analysis="a", verdict="contradicts", new_text=blocks[1].text, quotes=[], rationale="", confidence_score=0.9)
     assert modify_suggestion(blocks[1], BlockResult("contradicts", same)) is None
+
+
+def test_score_value_vs_rewrite():
+    r = BlockResult("contradicts", quotes=[("гайд", "Срок ответа: 5 рабочих дней.")])
+    old = "Срок ответа на обращение — 10 рабочих дней."
+    assert modify_score(old, "Срок ответа на обращение — 5 рабочих дней.", r, 0.95) == (0.95, "")
+    two = BlockResult("contradicts", quotes=[("гайд", "Срок ответа: 5 дней."), ("faq", "Отвечаем за 5 дней.")])
+    assert modify_score(old, "Срок ответа на обращение — 5 рабочих дней.", two, 0.95)[0] == 0.97
+    score, reason = modify_score(old, "Мы стараемся отвечать на обращения клиентов быстро, обычно в течение 5 рабочих дней.", r, 0.95)
+    assert score == 0.75 and reason
+    score, _ = modify_score(old, "Срок ответа на обращение — 7 рабочих дней.", r, 0.95)
+    assert score == 0.6  # 7 нет в цитате
+    assert modify_score(old, "Срок ответа на обращение — 5 рабочих дней.", r, 0.5)[0] == 0.5  # модель сомневается
+
+
+def test_covered_fact_skips_model():
+    blocks = [Block("d-1", "paragraph", "Интервал сбора метрик — 60 секунд.", True, "")]
+    assert covered("Интервал сбора метрик: 60 секунд.", blocks)
+    assert not covered("Срок хранения метрик: 30 дней.", blocks)
 
 
 if __name__ == "__main__":

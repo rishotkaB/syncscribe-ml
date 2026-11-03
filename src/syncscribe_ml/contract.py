@@ -38,7 +38,7 @@ from pathlib import Path
 
 from .llm import analyze_truth, classify_truth, confirm_conflict, load_prompt, propose_addition
 from .metrics import normalize, quote_in_source
-from .retrieval import FragmentIndex
+from .retrieval import FragmentIndex, tokenize
 from .schema import TruthResultV3
 from .truth import NEEDS_ATTENTION, Chunk, bad_quotes, by_file, combine, search_text
 
@@ -50,9 +50,20 @@ _LIST_ITEM = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+")
 _MD_HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[«\"(]?[A-ZА-ЯЁ0-9])")
 
-# Ограничения на confidence_score поверх оценки модели (модель склонна ставить 0.9+ всему подряд).
-CAP_BAD_QUOTE = 0.4   # цитаты нет в источнике дословно: правка может быть выдумана
-CAP_ADD_SAME_TEXT = 0.0
+# confidence_score считаем в коде по проверяемым признакам. Оценку модели используем, только если
+# она сама сомневается (ниже 0.7): прогоны 03.11 показали, что и qwen3:8b, и gpt-4o-mini ставят
+# всем правкам одно и то же (0.95 / 0.85), то есть их оценка ничего не различает.
+SCORE_VALUE_TWO_SOURCES = 0.97  # меняется только значение, его подтверждают два источника
+SCORE_VALUE = 0.95              # меняется только значение (число, срок, версия), оно есть в цитате
+SCORE_REWRITE = 0.75            # модель переписала формулировку, а не одно значение
+SCORE_CONFLICT_REJECTED = 0.6   # источники расходились, проверка решила, что спора нет
+SCORE_VALUE_NOT_IN_QUOTE = 0.6  # нового значения нет в цитате источника
+SCORE_BAD_QUOTE = 0.4           # цитаты нет в источнике дословно: правка может быть выдумана
+SCORE_ADD = 0.8                 # добавление: текст придуман моделью, место выбрано ею же
+SCORE_ADD_MANY_FACTS = 0.6      # добавление склеивает несколько предложений
+MODEL_DOUBT = 0.7               # ниже этого оценку модели учитываем
+MAX_CHANGED_TOKENS = 4          # «только значение»: изменилось не больше 4 слов/чисел
+COVERED_SHARE = 0.8             # факт считаем уже описанным, если 80% его слов есть в ближайших блоках
 
 
 class ContractError(ValueError):
@@ -93,11 +104,12 @@ class BlockResult:
     verdict: str = "not_covered"
     result: TruthResultV3 | None = None
     quotes: list[tuple[str, str]] = field(default_factory=list)
-    used_chunks: set[int] = field(default_factory=set)  # куски источника, на которые опирается вердикт
+    used_quotes: list[str] = field(default_factory=list)  # цитаты источника, на которые опирается вердикт
     calls: Counter = field(default_factory=Counter)
     seconds: float = 0.0
     bad_quotes: int = 0
     error: str = ""
+    conflict_rejected: bool = False
 
 
 # ---------- разбор входа ----------
@@ -205,12 +217,10 @@ def judge_block(model: str, prompts: Prompts, block: Block, groups: dict[str, li
 
     out.verdict, out.result, out.quotes = verdict, result, quotes
     out.bad_quotes = sum(len(bad_quotes(r, groups[f])) for f, r in per_file.items() if r.verdict == "contradicts")
-    # Какие куски источника «потрачены» на этот блок: на них не ищем добавлений.
+    out.conflict_rejected = bool(out.calls["conflict_rejected"])
+    # Какие факты источника «потрачены» на этот блок: по ним не ищем добавлений.
     if verdict in NEEDS_ATTENTION or verdict == "consistent":
-        for f, r in per_file.items():
-            for q in r.quotes:
-                if 1 <= q.source <= len(groups[f]):
-                    out.used_chunks.add(index_of[id(groups[f][q.source - 1])])
+        out.used_quotes = [q.text for r in per_file.values() for q in r.quotes]
     return out
 
 
@@ -231,6 +241,38 @@ def narrow(old: str, new: str) -> tuple[str, str]:
     return old, new
 
 
+def changed_tokens(old: str, new: str) -> tuple[list[str], list[str]]:
+    """Какие слова/числа ушли и какие появились (со стеммингом, как в поиске)."""
+    a, b = Counter(tokenize(old)), Counter(tokenize(new))
+    return list((a - b).elements()), list((b - a).elements())
+
+
+def modify_score(old: str, new: str, r: BlockResult, model_score: float) -> tuple[float, str]:
+    """→ (оценка, причина сомнения или ""). Признаки проверяемые, поэтому оценка объяснима."""
+    removed, added = changed_tokens(old, new)
+    quote_tokens = set(tokenize(" ".join(text for _, text in r.quotes)))
+    files = {file for file, _ in r.quotes}
+    options = []
+    if len(removed) + len(added) <= 2 * MAX_CHANGED_TOKENS and len(added) <= MAX_CHANGED_TOKENS:
+        options.append((SCORE_VALUE_TWO_SOURCES if len(files) > 1 else SCORE_VALUE, ""))
+    else:
+        options.append((SCORE_REWRITE, "Правка переписывает формулировку, а не одно значение."))
+    value_only = options[0][0] != SCORE_REWRITE
+    # Новые значения должны быть в цитате. Если правка — замена значения, проверяем все новые слова;
+    # если переписана формулировка, только числа (слова формулировки модель берёт не из источника).
+    must_quote = [t for t in added if value_only or t.isdigit()]
+    if must_quote and not set(must_quote) <= quote_tokens:
+        options.append((SCORE_VALUE_NOT_IN_QUOTE, "Нового значения нет в цитате источника дословно."))
+    if r.conflict_rejected:
+        options.append((SCORE_CONFLICT_REJECTED, "Источники по этому месту расходились, проверка сочла это разными объектами."))
+    if r.bad_quotes:
+        options.append((SCORE_BAD_QUOTE, "Цитата не найдена в источнике дословно."))
+    if model_score < MODEL_DOUBT:
+        options.append((model_score, "Модель сама сомневается в правке."))
+    score, reason = min(options, key=lambda o: o[0])
+    return round(score, 2), reason
+
+
 def modify_suggestion(block: Block, r: BlockResult) -> dict | None:
     res = r.result
     if res is None or not res.new_text.strip() or normalize(res.new_text) == normalize(block.text):
@@ -240,10 +282,9 @@ def modify_suggestion(block: Block, r: BlockResult) -> dict | None:
     quotes = " ".join(f"«{text}» ({file})" for file, text in r.quotes)
     if quotes:
         rationale += f" Источник: {quotes}"
-    score = round(float(res.confidence_score), 2)
-    if r.bad_quotes:
-        score = min(score, CAP_BAD_QUOTE)
-        rationale += " Цитата не найдена в источнике дословно, проверьте правку внимательно."
+    score, reason = modify_score(old_text, new_text, r, float(res.confidence_score))
+    if reason and score < MODEL_DOUBT and reason not in rationale:
+        rationale += f" Проверьте внимательно: {reason[0].lower()}{reason[1:]}"
     return {
         "change_type": "modify",
         "target_block_id": block.block_id,
@@ -267,6 +308,19 @@ def conflict_flag(block: Block, r: BlockResult) -> dict:
 
 # ---------- шаг 2: add ----------
 
+def covered(fact: str, blocks: list[Block]) -> bool:
+    """Почти все слова и числа факта уже есть в ближайших блоках документа → описан, модель не зовём."""
+    words = [t for t in tokenize(fact) if len(t) > 2 or t.isdigit()]
+    if not words:
+        return True
+    for b in blocks:  # по каждому блоку отдельно: иначе «50» из одного абзаца и «лицензия» из другого дают ложное «описан»
+        present = set(tokenize(b.text))
+        numbers_ok = all(t in present for t in words if t.isdigit())
+        if numbers_ok and sum(t in present for t in words) / len(words) >= COVERED_SHARE:
+            return True
+    return False
+
+
 def last_sentence(text: str) -> str:
     sentences = split_sentences(text)
     return sentences[-1] if sentences else text
@@ -280,12 +334,20 @@ def addition(model: str, prompts: Prompts, chunk: Chunk, candidates: list[Block]
         return None, latency
     block = candidates[res.after - 1]
     rationale = res.rationale.strip() or res.analysis.strip()
-    score = round(float(res.confidence_score), 2)
+    options = [(SCORE_ADD, "")]
+    if len(split_sentences(res.new_text)) > 1:
+        options.append((SCORE_ADD_MANY_FACTS, "Добавление объединяет несколько фактов."))
     if res.quote and quote_in_source(res.quote, chunk.text):
         rationale += f" Источник: «{res.quote}» ({chunk.file})"
     else:
-        score = min(score, CAP_BAD_QUOTE)
+        options.append((SCORE_BAD_QUOTE, "Цитата не найдена в источнике дословно."))
         rationale += f" Источник ({chunk.file}): «{chunk.text}»"
+    if res.confidence_score < MODEL_DOUBT:
+        options.append((float(res.confidence_score), "Модель сама сомневается в добавлении."))
+    score, reason = min(options, key=lambda o: o[0])
+    score = round(score, 2)
+    if reason and score < MODEL_DOUBT:
+        rationale += f" Проверьте внимательно: {reason[0].lower()}{reason[1:]}"
     return {
         "change_type": "add",
         "target_block_id": block.block_id,
@@ -357,14 +419,14 @@ def _analyze(blocks, sources, model, prompts, fast, top_k, mode, adds, workers):
 
     position = {b.block_id: i for i, b in enumerate(blocks)}
     found: list[tuple[int, int, dict]] = []  # (позиция блока, порядок внутри, правка) — для сортировки по документу
-    flags, used = [], set()
+    flags, used = [], []
     llm_seconds = 0.0
     for block, r in zip(checkable, results):
         meta.update(r.calls)
         meta[r.verdict if not r.error else "errors"] += 1
         meta["bad_quotes"] += r.bad_quotes
         llm_seconds += r.seconds
-        used |= r.used_chunks
+        used += [normalize(q) for q in r.used_quotes if q.strip()]
         if r.verdict == "contradicts":
             s = modify_suggestion(block, r)
             if s:
@@ -373,18 +435,36 @@ def _analyze(blocks, sources, model, prompts, fast, top_k, mode, adds, workers):
             flags.append(conflict_flag(block, r))
 
     if adds:
-        rest = [c for i, c in enumerate(chunks) if i not in used]
+        # Добавления ищем по отдельным фактам (предложениям), а не по кускам: иначе модель склеивает
+        # в одну вставку 3–4 факта из абзаца руководства (прогон 03.11).
+        facts = [Chunk(c.file, c.section, sentence) for c in chunks for sentence in split_sentences(c.text)]
+        rest = [f for f in facts if not any(q in normalize(f.text) or normalize(f.text) in q for q in used)]
+        meta["add_facts_unused"] = len(rest)
         block_index = FragmentIndex([b.for_model() for b in checkable], mode=mode)
         doc_text = "\n".join(b.text for b in blocks)
-        seen = set()
-        for chunk, hits in zip(rest, block_index.search_many([search_text(c) for c in rest], k=top_k)):
+        todo = []
+        for fact, hits in zip(rest, block_index.search_many([search_text(f) for f in rest], k=top_k)):
             candidates = [checkable[h.index] for h in hits]
             if not candidates:
                 continue
+            if covered(fact.text, candidates):  # дешёвая проверка без модели: факт уже описан в документе
+                meta["add_skipped_covered"] += 1
+                continue
+            todo.append((fact, candidates))
+
+        def check_add(item):
+            fact, candidates = item
             try:
-                s, latency = addition(model, prompts, chunk, candidates, doc_text)
+                return addition(model, prompts, fact, candidates, doc_text)
             except Exception as exc:
-                logger.warning("добавление по куску «%s»: %s", chunk.text[:40], exc)
+                logger.warning("добавление по факту «%s»: %s", fact.text[:40], exc)
+                return "error", 0.0
+
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            added = list(pool.map(check_add, todo))
+        seen = set()
+        for s, latency in added:
+            if s == "error":
                 meta["errors"] += 1
                 continue
             meta["add_checks"] += 1
