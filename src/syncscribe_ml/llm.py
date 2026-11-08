@@ -41,11 +41,15 @@ def add_llm_args(parser) -> None:
                         help="ollama — локально; openai — любой OpenAI-совместимый API (vLLM, облако)")
     parser.add_argument("--base-url", default=os.environ.get("LLM_BASE_URL", ""),
                         help="Адрес OpenAI-совместимого API, например http://localhost:8000/v1 (ключ — в LLM_API_KEY)")
+    parser.add_argument("--embed", choices=("auto", "ollama", "local"), default=os.environ.get("EMBED_BACKEND", "auto"),
+                        help="Чем считать эмбеддинги BGE-M3: ollama — через Ollama; local — прямо в Python "
+                             "(pip install -e .[local]); auto — local, если установлен, иначе ollama")
 
 
 def configure(args) -> None:
     """Запомнить выбор провайдера из флагов скрипта."""
     os.environ["LLM_PROVIDER"] = args.provider
+    os.environ["EMBED_BACKEND"] = getattr(args, "embed", None) or os.environ.get("EMBED_BACKEND", "auto")
     if args.base_url:
         os.environ["LLM_BASE_URL"] = args.base_url
     if args.provider == "openai" and not os.environ.get("LLM_BASE_URL"):
@@ -53,8 +57,11 @@ def configure(args) -> None:
 
 
 def describe() -> str:
+    from .retrieval import embed_backend
+
     provider = os.environ.get("LLM_PROVIDER", "ollama")
-    return provider if provider == "ollama" else f"{provider} ({os.environ.get('LLM_BASE_URL', '')})"
+    llm = provider if provider == "ollama" else f"{provider} ({os.environ.get('LLM_BASE_URL', '')})"
+    return f"{llm}, эмбеддинги: {embed_backend()}"
 
 
 def _ollama(model: str, messages: list[dict], schema: type[BaseModel], think: bool) -> tuple[str, str]:

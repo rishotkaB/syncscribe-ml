@@ -11,14 +11,19 @@
 Два списка сливаем через RRF (reciprocal rank fusion): складываем 1/(60 + место) из каждого списка.
 RRF не требует подгонять шкалы оценок друг к другу, поэтому это стандартный выбор.
 
-Локально эмбеддинги считает Ollama (`ollama pull bge-m3`), индекс в памяти.
+Эмбеддинги BGE-M3 считаются одним из двух способов (EMBED_BACKEND или флаг --embed):
+- ollama — через локальную Ollama (`ollama pull bge-m3`);
+- local  — прямо в Python через sentence-transformers (`pip install -e .[local]`), Ollama не нужна.
+По умолчанию auto: local, если sentence-transformers установлен, иначе ollama. Индекс в памяти.
 В сервисе то же самое ляжет в Qdrant (dense + sparse векторы), логика поиска не меняется.
 """
 
 from __future__ import annotations
 
 import math
+import os
 import re
+from functools import lru_cache
 from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
@@ -67,7 +72,39 @@ class BM25:
 
 # ---------- dense ----------
 
+EMBED_BACKENDS = ("auto", "ollama", "local")
+# Имя модели в Ollama → имя той же модели на Hugging Face (для sentence-transformers).
+HF_NAMES = {"bge-m3": "BAAI/bge-m3"}
+
+
+def embed_backend() -> str:
+    """ollama или local (см. docstring модуля)."""
+    backend = os.environ.get("EMBED_BACKEND", "auto")
+    if backend not in EMBED_BACKENDS:
+        raise ValueError(f"EMBED_BACKEND должен быть одним из {EMBED_BACKENDS}, а не {backend!r}")
+    if backend == "auto":
+        try:
+            import sentence_transformers  # noqa: F401
+        except ImportError:
+            return "ollama"
+        return "local"
+    return backend
+
+
+@lru_cache(maxsize=2)
+def _local_model(name: str):
+    """Модель грузится один раз на процесс: при первом запуске скачивается с Hugging Face (~2,3 ГБ для bge-m3)."""
+    from sentence_transformers import SentenceTransformer
+
+    return SentenceTransformer(name)  # сама выберет GPU, если он есть, иначе CPU
+
+
 def embed(texts: list[str], model: str = EMBED_MODEL) -> list[list[float]]:
+    model = os.environ.get("EMBED_MODEL", model)
+    if embed_backend() == "local":
+        vectors = _local_model(HF_NAMES.get(model, model)).encode(texts, batch_size=16, normalize_embeddings=True)
+        return [list(map(float, v)) for v in vectors]
+
     import ollama
 
     return [list(v) for v in ollama.embed(model=model, input=texts).embeddings]

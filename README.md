@@ -1,30 +1,71 @@
 # syncscribe-ml
 
-ML-часть SyncScribe. Модуль определяет, затронут ли фрагмент документа изменением источника, и предлагает черновик правки.
+ML-часть SyncScribe: находит в документе абзацы, которые противоречат источнику истины (протоколу встречи, release notes, руководству), и предлагает правки.
 
-## Контракт 2.0 с SyncBack: быстрый старт
+## Быстрый старт: контракт 2.0 с SyncBack
 
-JSON с документом по блокам → JSON с правками. Формат полей: `docs/contract_v2_schema.md`, как устроено: `docs/contract_v2.md`.
+Что делает: JSON с документом, разбитым на блоки, и источником истины → JSON с правками `modify` / `add`, `confidence_score` и пометками «проверьте вручную». Поля и значения: [`docs/contract_v2_schema.md`](docs/contract_v2_schema.md), как устроено внутри: [`docs/contract_v2.md`](docs/contract_v2.md).
 
-1. Установи [Ollama](https://ollama.com/download) и скачай модель эмбеддингов (нужна всегда, поиск идёт через неё):
-   ```
-   ollama pull bge-m3
-   ```
-   Если LLM будет локальной, ещё `ollama pull qwen3:8b`.
-2. Окружение, как в шаге 2 ниже: `python -m venv .venv`, активировать, `pip install -e .`
-3. Запуск на примере (`-o` — куда записать ответ):
-   - локальная модель:
-     ```
-     python scripts/run_contract.py data/contract/example_request.json -o out.json
-     ```
-   - модель по API (PowerShell; ключ только через переменную):
-     ```
-     $env:LLM_API_KEY = "sk-..."
-     python scripts/run_contract.py data/contract/example_request.json -o out.json --provider openai --base-url https://api.openai.com/v1 --model gpt-4o-mini --workers 8
-     ```
-   Свой файл: тот же скрипт, путь к своему JSON вместо примера.
+Нужны две модели:
+- **LLM** — локальная qwen3:8b через Ollama или любая модель по OpenAI-совместимому API;
+- **BGE-M3** (эмбеддинги для поиска) — через Ollama или прямо в Python. Выбирается флагом `--embed`.
 
-## Запуск (Windows, локально)
+### 1. Окружение (Python 3.10+, команды из папки репозитория)
+
+```
+python -m venv .venv
+.venv\Scripts\activate          # Windows; на Linux/macOS: source .venv/bin/activate
+```
+
+Дальше один из двух вариантов.
+
+**Вариант А: с Ollama.** Подходит, если Ollama уже стоит (на видеокарте быстрее всего).
+```
+pip install -e .
+ollama pull bge-m3
+ollama pull qwen3:8b             # только если LLM тоже локальная
+```
+
+**Вариант Б: без Ollama.** BGE-M3 считается в Python (на видеокарте, если она есть, иначе на процессоре), LLM — по API.
+```
+pip install -e .[local]
+```
+Ставит PyTorch и sentence-transformers (~2–3 ГБ). При первом запуске модель BGE-M3 скачается с Hugging Face (~2,3 ГБ) и дальше берётся из кэша.
+
+### 2. Запуск на примере
+
+`-o` — куда записать ответ. Свой запрос: тот же скрипт, путь к своему JSON.
+
+Локальная LLM (вариант А):
+```
+python scripts/run_contract.py data/contract/example_request.json -o out.json
+```
+
+LLM по API (PowerShell; ключ только через переменную, не флагом):
+```
+$env:LLM_API_KEY = "sk-..."
+python scripts/run_contract.py data/contract/example_request.json -o out.json --provider openai --base-url https://api.openai.com/v1 --model gpt-4o-mini --workers 8
+```
+На Linux/macOS вместо первой строки: `export LLM_API_KEY=sk-...`
+
+`--embed` выбирает, чем считать эмбеддинги: `auto` (по умолчанию: в Python, если установлен вариант Б, иначе Ollama), `ollama` или `local`. Что выбрано, скрипт пишет в первой строке вывода.
+
+Большой пример с разметкой (209 блоков, 2 источника, 42 ошибки): `data/contract/large_request.json` с `--labels data/contract/large_labels.json`.
+
+**Облачные API — только для разработки и только на синтетических данных.** Документы клиентов под NDA отправляются только в on-prem модель.
+
+### Если не работает
+
+| Ошибка | Что сделать |
+|---|---|
+| `Failed to connect to Ollama` | Запусти Ollama или поставь вариант Б и добавь `--embed local` |
+| `401 Unauthorized` | Неверный ключ: нужен API-ключ (для OpenAI — platform.openai.com) и баланс; переменная задана в том же окне терминала |
+| `model "bge-m3" not found` | `ollama pull bge-m3` |
+| Долго на первом запуске с `--embed local` | Скачивается BGE-M3 (~2,3 ГБ), это один раз |
+
+## Другие режимы и eval
+
+### Запуск eval (Windows, локально)
 
 1. Установи [Ollama](https://ollama.com/download) и скачай модель:
    ```
@@ -72,7 +113,11 @@ python scripts/eval_truth.py --provider openai --base-url https://openrouter.ai/
 | `src/syncscribe_ml/diff.py` | Этап 3: что изменилось между версиями источника, и пары (БЫЛО, СТАЛО) по разделам для LLM |
 | `src/syncscribe_ml/parse.py` | Загрузка .md/.txt, а .docx/.pdf через Docling (`pip install -e .[docling]`) |
 | `scripts/diff_docs.py` | Показать изменения между двумя версиями (`--pairs` — что уйдёт в LLM) |
-| `src/syncscribe_ml/retrieval.py` | Этап 4: гибридный поиск кандидатов (BGE-M3 через Ollama + BM25, слияние RRF) и правило для удалённых разделов |
+| `src/syncscribe_ml/retrieval.py` | Этап 4: гибридный поиск кандидатов (BGE-M3 через Ollama или sentence-transformers + BM25, слияние RRF) и правило для удалённых разделов |
+| `src/syncscribe_ml/contract.py` | Контракт 2.0 с SyncBack: разбор запроса, проверка блоков, добавления, confidence_score, ответ |
+| `scripts/run_contract.py` | Запуск контракта 2.0 на JSON-запросе (`--labels` — точность и полнота) |
+| `scripts/md_to_request.py` | Собрать JSON-запрос из markdown-документа и файлов-источников |
+| `data/contract/` | Примеры запросов и разметка для контракта 2.0 |
 | `scripts/check_docs.py` | Сквозной прогон: две версии источника + производный документ → что править (`--all` — без поиска, `--json out.json` — результат в формате SyncBack, `--fast` — сначала короткий «да/нет», `--labels` — точность и полнота по разметке) |
 | `scripts/make_large_example.py` | Большой синтетический пример для замера скорости: `data/large/` (источник 15 разделов, 13 изменений; документ 198 абзацев, 39 затронуты) |
 | `scripts/check_truth.py` | Режим «источник истины»: документ + один или несколько файлов с верными данными → правки (`contradicts`) и пометки «источники спорят» без правки (`--fast`, `--labels`, `--json`) |
@@ -80,7 +125,7 @@ python scripts/eval_truth.py --provider openai --base-url https://openrouter.ai/
 | `src/syncscribe_ml/syncback.py` | Перевод наших правок в формат ответа бэкенда SyncBack (`{"suggestions": [...]}`) |
 | `scripts/eval_retrieval.py` | recall@k поиска на 50 примерах (`--mode hybrid/dense/bm25`) |
 | `data/diff/` | Пример для этапа 3: руководство v1/v2 и производный документ |
-| `tests/` | Проверки diff и поиска: `python tests/test_diff.py`, `python tests/test_retrieval.py`, `python tests/test_syncback.py` |
+| `tests/` | Проверки без модели: `python tests/test_contract.py`, `test_truth.py`, `test_diff.py`, `test_retrieval.py`, `test_syncback.py` |
 
 ## Пороги для пилота
 
