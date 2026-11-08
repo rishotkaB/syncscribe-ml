@@ -2,6 +2,28 @@
 
 ML-часть SyncScribe. Модуль определяет, затронут ли фрагмент документа изменением источника, и предлагает черновик правки.
 
+## Контракт 2.0 с SyncBack: быстрый старт
+
+JSON с документом по блокам → JSON с правками. Формат полей: `docs/contract_v2_schema.md`, как устроено: `docs/contract_v2.md`.
+
+1. Установи [Ollama](https://ollama.com/download) и скачай модель эмбеддингов (нужна всегда, поиск идёт через неё):
+   ```
+   ollama pull bge-m3
+   ```
+   Если LLM будет локальной, ещё `ollama pull qwen3:8b`.
+2. Окружение, как в шаге 2 ниже: `python -m venv .venv`, активировать, `pip install -e .`
+3. Запуск на примере (`-o` — куда записать ответ):
+   - локальная модель:
+     ```
+     python scripts/run_contract.py data/contract/example_request.json -o out.json
+     ```
+   - модель по API (PowerShell; ключ только через переменную):
+     ```
+     $env:LLM_API_KEY = "sk-..."
+     python scripts/run_contract.py data/contract/example_request.json -o out.json --provider openai --base-url https://api.openai.com/v1 --model gpt-4o-mini --workers 8
+     ```
+   Свой файл: тот же скрипт, путь к своему JSON вместо примера.
+
 ## Запуск (Windows, локально)
 
 1. Установи [Ollama](https://ollama.com/download) и скачай модель:
