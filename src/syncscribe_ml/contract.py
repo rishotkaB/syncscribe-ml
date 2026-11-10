@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from collections import Counter
@@ -45,7 +46,9 @@ from .truth import NEEDS_ATTENTION, Chunk, bad_quotes, by_file, combine, search_
 logger = logging.getLogger("syncscribe_ml.contract")
 
 CONTRACT_VERSION = "2.0"
-PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
+# В Docker-образе пакет ставится в site-packages, и путь от __file__ до корня репозитория теряется:
+# там папку промптов задают переменной SYNCSCRIBE_ML_PROMPTS_DIR.
+PROMPTS_DIR = Path(os.environ.get("SYNCSCRIBE_ML_PROMPTS_DIR") or Path(__file__).resolve().parents[2] / "prompts")
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+")
 _MD_HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[«\"(]?[A-ZА-ЯЁ0-9])")

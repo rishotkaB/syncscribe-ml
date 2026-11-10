@@ -13,6 +13,8 @@ dependencies = [
 docling = ["docling>=2"]
 # BGE-M3 прямо в Python, без Ollama (тянет torch). Модель скачается с Hugging Face при первом запуске.
 local = ["sentence-transformers>=3"]
+# HTTP-сервис для SyncBack (src/syncscribe_ml/server.py).
+server = ["fastapi>=0.110", "uvicorn>=0.29"]
 
 [build-system]
 requires = ["setuptools>=68"]

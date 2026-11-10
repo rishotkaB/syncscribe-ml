@@ -158,6 +158,44 @@ python scripts/run_contract.py data/contract/example_request.json -o out.json --
 | `model "bge-m3" not found` | `ollama pull bge-m3` |
 | Долго на первом запуске с `--embed local` | Скачивается BGE-M3 (~2,3 ГБ), это один раз |
 
+## HTTP-сервис для SyncBack
+
+SyncBack вызывает ML-часть по HTTP: тот же `run()`, обёрнутый в сервис (`src/syncscribe_ml/server.py`). Логика анализа не меняется.
+
+```
+pip install -e .[server]
+uvicorn syncscribe_ml.server:app --host 0.0.0.0 --port 8000
+```
+Или в Docker (эмбеддинги через Ollama; для BGE-M3 в Python — `--build-arg EXTRAS=server,local`):
+```
+docker build -t syncscribe-ml .
+docker run -p 8000:8000 -e OLLAMA_HOST=http://ollama:11434 -e SYNCSCRIBE_ML_MODEL=qwen3:8b syncscribe-ml
+```
+
+- `POST /v1/analyze` — тело: запрос 2.0; ответ: `200` и ответ 2.0. Ошибки запроса и модели — в теле (`status: "failed"`, `invalid_request` / `pipeline_error`). HTTP-ошибки только интеграционные: `400` — не JSON-объект, `401` — неверный ключ, `429` + `Retry-After` — все слоты заняты (SyncBack повторит).
+- `GET /health` — `200`, когда сервис принимает запросы. Без авторизации.
+- Прогон держит соединение до ответа (большой документ — минуты). SyncBack ждёт до 25 минут.
+
+Параметры анализа задаются переменными окружения сервиса, SyncBack их не передаёт:
+
+| Переменная | По умолчанию | Что |
+|---|---|---|
+| `SYNCSCRIBE_ML_MODEL` | `LLM_MODEL` или `qwen3:8b` | модель LLM |
+| `SYNCSCRIBE_ML_WORKERS` | 1 | блоков параллельно внутри запроса |
+| `SYNCSCRIBE_ML_TOP_K` | 3 | кусков источника на блок |
+| `SYNCSCRIBE_ML_MODE` | `hybrid` | `hybrid` / `dense` / `bm25` |
+| `SYNCSCRIBE_ML_FAST` | 1 | сначала короткий вызов «только вердикт» |
+| `SYNCSCRIBE_ML_ADDS` | 1 | искать правки «добавить» |
+| `SYNCSCRIBE_ML_MAX_CONCURRENT` | 1 | запросов одновременно, сверх — `429` |
+| `SYNCSCRIBE_ML_RETRY_AFTER` | 30 | секунд в `Retry-After` |
+| `SYNCSCRIBE_ML_API_KEY` | пусто | если задан — нужен `Authorization: Bearer <ключ>` |
+| `SYNCSCRIBE_ML_WARMUP` | 0 | загрузить модель эмбеддингов на старте |
+| `SYNCSCRIBE_ML_PROMPTS_DIR` | `prompts/` репозитория | папка промптов (в образе — `/app/prompts`) |
+
+Провайдер LLM и эмбеддинги — как раньше: `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, `EMBED_BACKEND`, `OLLAMA_HOST`.
+
+Проверка без модели: `python tests/test_server.py`.
+
 ## Другие режимы и eval
 
 ### Запуск eval (Windows, локально)
@@ -210,6 +248,7 @@ python scripts/eval_truth.py --provider openai --base-url https://openrouter.ai/
 | `scripts/diff_docs.py` | Показать изменения между двумя версиями (`--pairs` — что уйдёт в LLM) |
 | `src/syncscribe_ml/retrieval.py` | Этап 4: гибридный поиск кандидатов (BGE-M3 через Ollama или sentence-transformers + BM25, слияние RRF) и правило для удалённых разделов |
 | `src/syncscribe_ml/contract.py` | Контракт 2.0 с SyncBack: разбор запроса, проверка блоков, добавления, confidence_score, ответ |
+| `src/syncscribe_ml/server.py`, `Dockerfile` | HTTP-сервис контракта 2.0 для SyncBack: `POST /v1/analyze`, `GET /health` |
 | `scripts/run_contract.py` | Запуск контракта 2.0 на JSON-запросе (`--labels` — точность и полнота) |
 | `scripts/md_to_request.py` | Собрать JSON-запрос из markdown-документа и файлов-источников |
 | `data/contract/` | Примеры запросов и разметка для контракта 2.0 |
@@ -220,7 +259,7 @@ python scripts/eval_truth.py --provider openai --base-url https://openrouter.ai/
 | `src/syncscribe_ml/syncback.py` | Перевод наших правок в формат ответа бэкенда SyncBack (`{"suggestions": [...]}`) |
 | `scripts/eval_retrieval.py` | recall@k поиска на 50 примерах (`--mode hybrid/dense/bm25`) |
 | `data/diff/` | Пример для этапа 3: руководство v1/v2 и производный документ |
-| `tests/` | Проверки без модели: `python tests/test_contract.py`, `test_truth.py`, `test_diff.py`, `test_retrieval.py`, `test_syncback.py` |
+| `tests/` | Проверки без модели: `python tests/test_contract.py`, `test_server.py`, `test_truth.py`, `test_diff.py`, `test_retrieval.py`, `test_syncback.py` |
 
 ## Пороги для пилота
 
